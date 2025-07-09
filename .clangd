@@ -3,6 +3,7 @@
 # Default conditions, apply everywhere.
 
 Diagnostics:
+  UnusedIncludes: None
   Includes:
     IgnoreHeader:
       - \.compat\.inc
