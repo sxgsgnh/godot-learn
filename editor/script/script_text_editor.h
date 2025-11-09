@@ -62,6 +62,7 @@ class ScriptTextEditor : public ScriptEditorBase {
 	RichTextLabel *errors_panel = nullptr;
 
 	Ref<Script> script;
+	Variant pending_state;
 	bool script_is_valid = false;
 	bool editor_enabled = false;
 
@@ -112,7 +113,7 @@ class ScriptTextEditor : public ScriptEditorBase {
 
 	PopupPanel *color_panel = nullptr;
 	ColorPicker *color_picker = nullptr;
-	Vector2 color_position;
+	Vector3i color_position;
 	String color_args;
 
 	bool theme_loaded = false;
@@ -181,6 +182,17 @@ class ScriptTextEditor : public ScriptEditorBase {
 
 	void _enable_code_editor();
 
+	struct DraggedExport {
+		ObjectID obj_id;
+		String variable_name;
+		Variant value;
+	};
+
+	LocalVector<DraggedExport> pending_dragged_exports;
+	Vector<ObjectID> _get_objects_for_export_assignment() const;
+	String _get_dropped_resource_as_exported_member(const Ref<Resource> &p_resource, const Vector<ObjectID> &p_script_instance_obj_ids);
+	void _assign_dragged_export_variables();
+
 protected:
 	void _update_breakpoint_list();
 	void _breakpoint_item_pressed(int p_idx);
@@ -205,7 +217,7 @@ protected:
 	void _warning_clicked(const Variant &p_line);
 
 	bool _is_valid_color_info(const Dictionary &p_info);
-	Array _inline_object_parse(const String &p_text, int p_line);
+	Array _inline_object_parse(const String &p_text);
 	void _inline_object_draw(const Dictionary &p_info, const Rect2 &p_rect);
 	void _inline_object_handle_click(const Dictionary &p_info, const Rect2 &p_rect);
 	String _picker_color_stringify(const Color &p_color, COLOR_MODE p_mode);

@@ -48,10 +48,6 @@ public:
 	const int32_t JOINT_GROUP_SIZE = 4;
 
 	enum {
-		ARRAY_BUFFER = 34962,
-		ELEMENT_ARRAY_BUFFER = 34963,
-	};
-	enum {
 		TEXTURE_TYPE_GENERIC = 0,
 		TEXTURE_TYPE_NORMAL = 1,
 	};
@@ -282,11 +278,11 @@ private:
 	GLTFAccessorIndex _encode_accessor_as_xform(Ref<GLTFState> p_state,
 			const Vector<Transform3D> p_attribs,
 			const bool p_for_vertex);
-	Error _encode_buffer_view(Ref<GLTFState> p_state, const double *p_src,
+	Error _encode_accessor_into_buffer_view(Ref<GLTFState> p_state, const double *p_src,
 			const int64_t p_count, const GLTFAccessor::GLTFAccessorType p_accessor_type,
 			const GLTFAccessor::GLTFComponentType p_component_type, const bool p_normalized,
 			const int64_t p_byte_offset, const bool p_for_vertex,
-			GLTFBufferViewIndex &r_accessor, const bool p_for_indices = false);
+			GLTFBufferViewIndex &r_buffer_view, const bool p_for_indices = false);
 
 	Error _encode_accessors(Ref<GLTFState> p_state);
 	Error _encode_buffer_views(Ref<GLTFState> p_state);

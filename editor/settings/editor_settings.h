@@ -89,8 +89,10 @@ private:
 	static Ref<EditorSettings> singleton;
 
 	HashSet<String> changed_settings;
+	mutable String auto_language;
 
 	mutable Ref<ConfigFile> project_metadata;
+	bool project_metadata_dirty = false;
 	HashMap<String, PropertyInfo> hints;
 	HashMap<String, VariantContainer> props;
 	int last_order;
@@ -118,10 +120,7 @@ private:
 
 	void _set_initialized();
 	void _load_defaults(Ref<ConfigFile> p_extra_config = Ref<ConfigFile>());
-	void _load_godot2_text_editor_theme();
 	void _load_default_visual_shader_editor_theme();
-	bool _save_text_editor_theme(const String &p_file);
-	bool _is_default_text_editor_theme(const String &p_theme_name);
 	static String _guess_exec_args_for_extenal_editor(const String &p_value);
 	const String _get_project_metadata_path() const;
 #ifndef DISABLE_DEPRECATED
@@ -141,7 +140,7 @@ public:
 	static String get_newest_settings_path();
 
 	static void create();
-	void setup_language();
+	void setup_language(bool p_initial_setup);
 	void setup_network();
 	static void save();
 	static void destroy();
@@ -173,6 +172,7 @@ public:
 
 	void set_project_metadata(const String &p_section, const String &p_key, const Variant &p_data);
 	Variant get_project_metadata(const String &p_section, const String &p_key, const Variant &p_default) const;
+	void save_project_metadata();
 
 	void set_favorites(const Vector<String> &p_favorites);
 	Vector<String> get_favorites() const;
@@ -182,16 +182,14 @@ public:
 	Vector<String> get_recent_dirs() const;
 	void load_favorites_and_recent_dirs();
 
-	void list_text_editor_themes();
-	void load_text_editor_theme();
-	bool import_text_editor_theme(const String &p_file);
-	bool save_text_editor_theme();
-	bool save_text_editor_theme_as(String p_file);
-	bool is_default_text_editor_theme();
+	static HashMap<StringName, Color> get_godot2_text_editor_theme();
+	static bool is_default_text_editor_theme(const String &p_theme_name);
+	void update_text_editor_themes_list();
 
 	Vector<String> get_script_templates(const String &p_extension, const String &p_custom_path = String());
 	String get_editor_layouts_config() const;
 	static float get_auto_display_scale();
+	String get_language() const;
 
 	void _add_shortcut_default(const String &p_name, const Ref<Shortcut> &p_shortcut);
 	void add_shortcut(const String &p_name, const Ref<Shortcut> &p_shortcut);

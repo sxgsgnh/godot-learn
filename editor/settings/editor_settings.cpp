@@ -49,7 +49,9 @@
 #include "editor/file_system/editor_paths.h"
 #include "editor/inspector/editor_property_name_processor.h"
 #include "editor/project_manager/engine_update_label.h"
+#include "editor/themes/editor_theme_manager.h"
 #include "editor/translations/editor_translation.h"
+#include "main/main.h"
 #include "modules/regex/regex.h"
 #include "scene/gui/color_picker.h"
 #include "scene/main/node.h"
@@ -79,7 +81,7 @@ bool EditorSettings::_set(const StringName &p_name, const Variant &p_value) {
 		emit_signal(SNAME("settings_changed"));
 
 		if (p_name == SNAME("interface/editor/editor_language")) {
-			setup_language();
+			setup_language(false);
 		}
 	}
 	return true;
@@ -361,6 +363,28 @@ void EditorSettings::_set_initialized() {
 	initialized = true;
 }
 
+static LocalVector<String> _get_skipped_locales() {
+	// Skip locales if Text server lack required features.
+	LocalVector<String> locales_to_skip;
+	if (!TS->has_feature(TextServer::FEATURE_BIDI_LAYOUT) || !TS->has_feature(TextServer::FEATURE_SHAPING)) {
+		locales_to_skip.push_back("ar"); // Arabic.
+		locales_to_skip.push_back("fa"); // Persian.
+		locales_to_skip.push_back("ur"); // Urdu.
+	}
+	if (!TS->has_feature(TextServer::FEATURE_BIDI_LAYOUT)) {
+		locales_to_skip.push_back("he"); // Hebrew.
+	}
+	if (!TS->has_feature(TextServer::FEATURE_SHAPING)) {
+		locales_to_skip.push_back("bn"); // Bengali.
+		locales_to_skip.push_back("hi"); // Hindi.
+		locales_to_skip.push_back("ml"); // Malayalam.
+		locales_to_skip.push_back("si"); // Sinhala.
+		locales_to_skip.push_back("ta"); // Tamil.
+		locales_to_skip.push_back("te"); // Telugu.
+	}
+	return locales_to_skip;
+}
+
 void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 	_THREAD_SAFE_METHOD_
 // Sets up the editor setting with a default value and hint PropertyInfo.
@@ -379,44 +403,27 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 	/* Languages */
 
 	{
-		String lang_hint = "en";
-		String host_lang = OS::get_singleton()->get_locale();
+		String lang_hint;
+		const String host_lang = OS::get_singleton()->get_locale();
 
-		// Skip locales if Text server lack required features.
-		Vector<String> locales_to_skip;
-		if (!TS->has_feature(TextServer::FEATURE_BIDI_LAYOUT) || !TS->has_feature(TextServer::FEATURE_SHAPING)) {
-			locales_to_skip.push_back("ar"); // Arabic
-			locales_to_skip.push_back("fa"); // Persian
-			locales_to_skip.push_back("ur"); // Urdu
-		}
-		if (!TS->has_feature(TextServer::FEATURE_BIDI_LAYOUT)) {
-			locales_to_skip.push_back("he"); // Hebrew
-		}
-		if (!TS->has_feature(TextServer::FEATURE_SHAPING)) {
-			locales_to_skip.push_back("bn"); // Bengali
-			locales_to_skip.push_back("hi"); // Hindi
-			locales_to_skip.push_back("ml"); // Malayalam
-			locales_to_skip.push_back("si"); // Sinhala
-			locales_to_skip.push_back("ta"); // Tamil
-			locales_to_skip.push_back("te"); // Telugu
-		}
-
+		// Skip locales which we can't render properly.
+		const LocalVector<String> locales_to_skip = _get_skipped_locales();
 		if (!locales_to_skip.is_empty()) {
 			WARN_PRINT("Some locales are not properly supported by selected Text Server and are disabled.");
 		}
 
-		String best;
+		String best = "en";
 		int best_score = 0;
 		for (const String &locale : get_editor_locales()) {
-			// Skip locales which we can't render properly (see above comment).
 			// Test against language code without regional variants (e.g. ur_PK).
 			String lang_code = locale.get_slicec('_', 0);
 			if (locales_to_skip.has(lang_code)) {
 				continue;
 			}
 
-			lang_hint += ",";
-			lang_hint += locale;
+			lang_hint += ";";
+			const String lang_name = TranslationServer::get_singleton()->get_locale_name(locale);
+			lang_hint += vformat("%s/[%s] %s", locale, locale, lang_name);
 
 			int score = TranslationServer::get_singleton()->compare_locales(host_lang, locale);
 			if (score > 0 && score >= best_score) {
@@ -424,11 +431,9 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 				best_score = score;
 			}
 		}
-		if (best_score == 0) {
-			best = "en";
-		}
+		lang_hint = vformat(";auto/Auto (%s);en/[en] English", TranslationServer::get_singleton()->get_locale_name(best)) + lang_hint;
 
-		EDITOR_SETTING_USAGE(Variant::STRING, PROPERTY_HINT_ENUM, "interface/editor/editor_language", best, lang_hint, PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_RESTART_IF_CHANGED | PROPERTY_USAGE_EDITOR_BASIC_SETTING);
+		EDITOR_SETTING_USAGE(Variant::STRING, PROPERTY_HINT_ENUM, "interface/editor/editor_language", "auto", lang_hint, PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_RESTART_IF_CHANGED | PROPERTY_USAGE_EDITOR_BASIC_SETTING);
 	}
 
 	// Asset library
@@ -486,6 +491,7 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 
 	EDITOR_SETTING_BASIC(Variant::INT, PROPERTY_HINT_RANGE, "interface/editor/main_font_size", 14, "8,48,1")
 	EDITOR_SETTING_BASIC(Variant::INT, PROPERTY_HINT_RANGE, "interface/editor/code_font_size", 14, "8,48,1")
+	_initial_set("interface/editor/main_font_custom_opentype_features", "");
 	EDITOR_SETTING(Variant::INT, PROPERTY_HINT_ENUM, "interface/editor/code_font_contextual_ligatures", 1, "Enabled,Disable Contextual Alternates (Coding Ligatures),Use Custom OpenType Feature Set")
 	_initial_set("interface/editor/code_font_custom_opentype_features", "");
 	_initial_set("interface/editor/code_font_custom_variations", "");
@@ -502,6 +508,7 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 	EDITOR_SETTING(Variant::STRING, PROPERTY_HINT_GLOBAL_FILE, "interface/editor/main_font", "", "*.ttf,*.otf,*.woff,*.woff2,*.pfb,*.pfm")
 	EDITOR_SETTING(Variant::STRING, PROPERTY_HINT_GLOBAL_FILE, "interface/editor/main_font_bold", "", "*.ttf,*.otf,*.woff,*.woff2,*.pfb,*.pfm")
 	EDITOR_SETTING(Variant::STRING, PROPERTY_HINT_GLOBAL_FILE, "interface/editor/code_font", "", "*.ttf,*.otf,*.woff,*.woff2,*.pfb,*.pfm")
+	EDITOR_SETTING(Variant::FLOAT, PROPERTY_HINT_RANGE, "interface/editor/dragging_hover_wait_seconds", 0.5, "0.01,10,0.01,or_greater,suffix:s");
 	_initial_set("interface/editor/separate_distraction_mode", false, true);
 	_initial_set("interface/editor/automatically_open_screenshots", true, true);
 	EDITOR_SETTING_USAGE(Variant::BOOL, PROPERTY_HINT_NONE, "interface/editor/single_window_mode", false, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_RESTART_IF_CHANGED | PROPERTY_USAGE_EDITOR_BASIC_SETTING)
@@ -549,6 +556,7 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 	EDITOR_SETTING_BASIC(Variant::INT, PROPERTY_HINT_RANGE, "interface/inspector/max_array_dictionary_items_per_page", 20, "10,100,1")
 	EDITOR_SETTING(Variant::BOOL, PROPERTY_HINT_NONE, "interface/inspector/show_low_level_opentype_features", false, "")
 	EDITOR_SETTING_BASIC(Variant::FLOAT, PROPERTY_HINT_RANGE, "interface/inspector/float_drag_speed", 5.0, "0.1,100,0.01")
+	EDITOR_SETTING_BASIC(Variant::FLOAT, PROPERTY_HINT_RANGE, "interface/inspector/integer_drag_speed", 0.5, "0.1,10,0.01")
 	EDITOR_SETTING_BASIC(Variant::INT, PROPERTY_HINT_ENUM, "interface/inspector/nested_color_mode", 0, "Containers & Resources,Resources,External Resources")
 	EDITOR_SETTING(Variant::BOOL, PROPERTY_HINT_NONE, "interface/inspector/delimitate_all_container_and_resources", true, "")
 	EDITOR_SETTING_USAGE(Variant::INT, PROPERTY_HINT_ENUM, "interface/inspector/default_property_name_style", EditorPropertyNameProcessor::STYLE_CAPITALIZED, "Raw (e.g. \"z_index\"),Capitalized (e.g. \"Z Index\"),Localized (e.g. \"Z Index\")", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_RESTART_IF_CHANGED);
@@ -577,21 +585,23 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 
 	// Theme
 	EDITOR_SETTING_BASIC(Variant::BOOL, PROPERTY_HINT_ENUM, "interface/theme/follow_system_theme", false, "")
-	EDITOR_SETTING_BASIC(Variant::STRING, PROPERTY_HINT_ENUM, "interface/theme/preset", "Default", "Default,Breeze Dark,Godot 2,Gray,Light,Solarized (Dark),Solarized (Light),Black (OLED),Custom")
+	EDITOR_SETTING_BASIC(Variant::STRING, PROPERTY_HINT_ENUM, "interface/theme/style", "Modern", "Modern,Classic")
+	EDITOR_SETTING_BASIC(Variant::STRING, PROPERTY_HINT_ENUM, "interface/theme/color_preset", "Default", "Default,Breeze Dark,Godot 2,Godot 3,Gray,Light,Solarized (Dark),Solarized (Light),Black (OLED),Custom")
 	EDITOR_SETTING_BASIC(Variant::STRING, PROPERTY_HINT_ENUM, "interface/theme/spacing_preset", "Default", "Compact,Default,Spacious,Custom")
 	EDITOR_SETTING(Variant::INT, PROPERTY_HINT_ENUM, "interface/theme/icon_and_font_color", 0, "Auto,Dark,Light")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "interface/theme/base_color", Color(0.2, 0.23, 0.31), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "interface/theme/accent_color", Color(0.41, 0.61, 0.91), "")
+	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "interface/theme/base_color", Color(0.14, 0.14, 0.14), "")
+	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "interface/theme/accent_color", Color(0.34, 0.62, 1.0), "")
 	EDITOR_SETTING_BASIC(Variant::BOOL, PROPERTY_HINT_NONE, "interface/theme/use_system_accent_color", false, "")
 	EDITOR_SETTING_BASIC(Variant::FLOAT, PROPERTY_HINT_RANGE, "interface/theme/contrast", 0.3, "-1,1,0.01")
 	EDITOR_SETTING(Variant::BOOL, PROPERTY_HINT_NONE, "interface/theme/draw_extra_borders", false, "")
-	EDITOR_SETTING(Variant::FLOAT, PROPERTY_HINT_RANGE, "interface/theme/icon_saturation", 1.0, "0,2,0.01")
+	EDITOR_SETTING(Variant::FLOAT, PROPERTY_HINT_RANGE, "interface/theme/icon_saturation", 2.0, "0,2,0.01")
+	EDITOR_SETTING(Variant::INT, PROPERTY_HINT_ENUM, "interface/theme/draw_relationship_lines", (int32_t)EditorThemeManager::RELATIONSHIP_SELECTED_ONLY, "None,Selected Only,All")
 	EDITOR_SETTING(Variant::FLOAT, PROPERTY_HINT_RANGE, "interface/theme/relationship_line_opacity", 0.1, "0.00,1,0.01")
 	EDITOR_SETTING(Variant::INT, PROPERTY_HINT_RANGE, "interface/theme/border_size", 0, "0,2,1")
-	EDITOR_SETTING(Variant::INT, PROPERTY_HINT_RANGE, "interface/theme/corner_radius", 3, "0,6,1")
+	EDITOR_SETTING(Variant::INT, PROPERTY_HINT_RANGE, "interface/theme/corner_radius", 4, "0,6,1")
 	EDITOR_SETTING(Variant::INT, PROPERTY_HINT_RANGE, "interface/theme/base_spacing", 4, "0,8,1")
 	EDITOR_SETTING(Variant::INT, PROPERTY_HINT_RANGE, "interface/theme/additional_spacing", 0, "0,8,1")
-	EDITOR_SETTING_USAGE(Variant::STRING, PROPERTY_HINT_GLOBAL_FILE, "interface/theme/custom_theme", "", "*.res,*.tres,*.theme", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_RESTART_IF_CHANGED)
+	EDITOR_SETTING_USAGE(Variant::STRING, PROPERTY_HINT_GLOBAL_FILE, "interface/theme/custom_theme", "", "*.res,*.tres,*.theme", PROPERTY_USAGE_DEFAULT)
 
 	// Touchscreen
 	bool has_touchscreen_ui = DisplayServer::get_singleton()->is_touchscreen_available();
@@ -604,7 +614,7 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 
 	EDITOR_SETTING(Variant::BOOL, PROPERTY_HINT_NONE, "interface/touchscreen/enable_pan_and_scale_gestures", has_touchscreen_ui, "")
 	set_restart_if_changed("interface/touchscreen/enable_pan_and_scale_gestures", true);
-	EDITOR_SETTING(Variant::FLOAT, PROPERTY_HINT_RANGE, "interface/touchscreen/scale_gizmo_handles", has_touchscreen_ui ? 3 : 1, "1,5,1")
+	EDITOR_SETTING(Variant::FLOAT, PROPERTY_HINT_RANGE, "interface/touchscreen/scale_gizmo_handles", has_touchscreen_ui ? 2 : 1, "1,5,1")
 	set_restart_if_changed("interface/touchscreen/scale_gizmo_handles", true);
 
 	// Only available in the Android/XR editor.
@@ -654,6 +664,7 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 
 	// Quick Open dialog
 	EDITOR_SETTING_USAGE(Variant::INT, PROPERTY_HINT_RANGE, "filesystem/quick_open_dialog/max_results", 100, "0,10000,1", PROPERTY_USAGE_DEFAULT)
+	_initial_set("filesystem/quick_open_dialog/instant_preview", false);
 	_initial_set("filesystem/quick_open_dialog/show_search_highlight", true);
 	_initial_set("filesystem/quick_open_dialog/enable_fuzzy_matching", true);
 	EDITOR_SETTING_USAGE(Variant::INT, PROPERTY_HINT_RANGE, "filesystem/quick_open_dialog/max_fuzzy_misses", 2, "0,10,1", PROPERTY_USAGE_DEFAULT)
@@ -695,45 +706,47 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 	EDITOR_SETTING_BASIC(Variant::STRING, PROPERTY_HINT_ENUM, "text_editor/theme/color_theme", "Default", "Default,Godot 2,Custom")
 
 	// Theme: Highlighting
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/symbol_color", Color(0.73, 0.87, 1.0), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/keyword_color", Color(1.0, 1.0, 0.7), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/control_flow_keyword_color", Color(1.0, 0.85, 0.7), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/base_type_color", Color(0.64, 1.0, 0.83), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/engine_type_color", Color(0.51, 0.83, 1.0), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/user_type_color", Color(0.42, 0.67, 0.93), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/comment_color", Color(0.4, 0.4, 0.4), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/doc_comment_color", Color(0.5, 0.6, 0.7), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/string_color", Color(0.94, 0.43, 0.75), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/background_color", Color(0.13, 0.12, 0.15), "")
-	EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/completion_background_color", Color(0.17, 0.16, 0.2), "")
-	EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/completion_selected_color", Color(0.26, 0.26, 0.27), "")
-	EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/completion_existing_color", Color(0.87, 0.87, 0.87, 0.13), "")
-	EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/completion_scroll_color", Color(1, 1, 1, 0.29), "")
-	EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/completion_scroll_hovered_color", Color(1, 1, 1, 0.4), "")
-	EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/completion_font_color", Color(0.67, 0.67, 0.67), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/text_color", Color(0.67, 0.67, 0.67), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/line_number_color", Color(0.67, 0.67, 0.67, 0.4), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/safe_line_number_color", Color(0.67, 0.78, 0.67, 0.6), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/caret_color", Color(0.67, 0.67, 0.67), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/caret_background_color", Color(0, 0, 0), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/text_selected_color", Color(0, 0, 0, 0), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/selection_color", Color(0.41, 0.61, 0.91, 0.35), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/brace_mismatch_color", Color(1, 0.2, 0.2), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/current_line_color", Color(0.3, 0.5, 0.8, 0.15), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/line_length_guideline_color", Color(0.3, 0.5, 0.8, 0.1), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/word_highlighted_color", Color(0.8, 0.9, 0.9, 0.15), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/number_color", Color(0.92, 0.58, 0.2), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/function_color", Color(0.4, 0.64, 0.81), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/member_variable_color", Color(0.9, 0.31, 0.35), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/mark_color", Color(1.0, 0.4, 0.4, 0.4), "")
-	EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/warning_color", Color(1.0, 0.8, 0.4, 0.1), "")
-	EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/bookmark_color", Color(0.08, 0.49, 0.98), "")
-	EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/breakpoint_color", Color(0.9, 0.29, 0.3), "")
-	EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/executing_line_color", Color(0.98, 0.89, 0.27), "")
-	EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/code_folding_color", Color(0.8, 0.8, 0.8, 0.8), "")
-	EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/folded_code_region_color", Color(0.68, 0.46, 0.77, 0.2), "")
-	EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/search_result_color", Color(0.05, 0.25, 0.05, 1), "")
-	EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, "text_editor/theme/highlighting/search_result_border_color", Color(0.41, 0.61, 0.91, 0.38), "")
+	const LocalVector<StringName> basic_text_editor_settings = {
+		"text_editor/theme/highlighting/symbol_color",
+		"text_editor/theme/highlighting/keyword_color",
+		"text_editor/theme/highlighting/control_flow_keyword_color",
+		"text_editor/theme/highlighting/base_type_color",
+		"text_editor/theme/highlighting/engine_type_color",
+		"text_editor/theme/highlighting/user_type_color",
+		"text_editor/theme/highlighting/comment_color",
+		"text_editor/theme/highlighting/doc_comment_color",
+		"text_editor/theme/highlighting/string_color",
+		"text_editor/theme/highlighting/background_color",
+		"text_editor/theme/highlighting/text_color",
+		"text_editor/theme/highlighting/line_number_color",
+		"text_editor/theme/highlighting/safe_line_number_color",
+		"text_editor/theme/highlighting/caret_color",
+		"text_editor/theme/highlighting/caret_background_color",
+		"text_editor/theme/highlighting/text_selected_color",
+		"text_editor/theme/highlighting/selection_color",
+		"text_editor/theme/highlighting/brace_mismatch_color",
+		"text_editor/theme/highlighting/current_line_color",
+		"text_editor/theme/highlighting/line_length_guideline_color",
+		"text_editor/theme/highlighting/word_highlighted_color",
+		"text_editor/theme/highlighting/number_color",
+		"text_editor/theme/highlighting/function_color",
+		"text_editor/theme/highlighting/member_variable_color",
+		"text_editor/theme/highlighting/mark_color",
+	};
+	// These values will be overwritten by EditorThemeManager, but can still be seen in some edge cases.
+	const HashMap<StringName, Color> text_colors = get_godot2_text_editor_theme();
+	for (const KeyValue<StringName, Color> &text_color : text_colors) {
+		if (basic_text_editor_settings.has(text_color.key)) {
+			EDITOR_SETTING_BASIC(Variant::COLOR, PROPERTY_HINT_NONE, text_color.key, text_color.value, "")
+		} else {
+			EDITOR_SETTING(Variant::COLOR, PROPERTY_HINT_NONE, text_color.key, text_color.value, "")
+		}
+	}
+
+	// The list is based on <https://github.com/KDE/syntax-highlighting/blob/master/data/syntax/alert.xml>.
+	_initial_set("text_editor/theme/highlighting/comment_markers/critical_list", "ALERT,ATTENTION,CAUTION,CRITICAL,DANGER,SECURITY");
+	_initial_set("text_editor/theme/highlighting/comment_markers/warning_list", "BUG,DEPRECATED,FIXME,HACK,TASK,TBD,TODO,WARNING");
+	_initial_set("text_editor/theme/highlighting/comment_markers/notice_list", "INFO,NOTE,NOTICE,TEST,TESTING");
 
 	// Appearance
 	EDITOR_SETTING_BASIC(Variant::BOOL, PROPERTY_HINT_NONE, "text_editor/appearance/enable_inline_color_picker", true, "");
@@ -813,7 +826,7 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 	_initial_set("text_editor/script_list/script_temperature_history_size", 15);
 	_initial_set("text_editor/script_list/highlight_scene_scripts", true);
 	_initial_set("text_editor/script_list/group_help_pages", true);
-	EDITOR_SETTING(Variant::INT, PROPERTY_HINT_ENUM, "text_editor/script_list/sort_scripts_by", 0, "Name,Path,None");
+	EDITOR_SETTING(Variant::INT, PROPERTY_HINT_ENUM, "text_editor/script_list/sort_scripts_by", 0, "None:2,Name:0,Path:1");
 	EDITOR_SETTING(Variant::INT, PROPERTY_HINT_ENUM, "text_editor/script_list/list_script_names_as", 0, "Name,Parent Directory And Name,Full Path");
 	EDITOR_SETTING(Variant::STRING, PROPERTY_HINT_GLOBAL_FILE, "text_editor/external/exec_path", "", "");
 	EDITOR_SETTING(Variant::STRING, PROPERTY_HINT_PLACEHOLDER_TEXT, "text_editor/external/exec_flags", "{file}", "Call flags with placeholders: {project}, {file}, {col}, {line}.");
@@ -849,7 +862,6 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 	// GridMap
 	// GridMapEditor
 	EDITOR_SETTING(Variant::FLOAT, PROPERTY_HINT_RANGE, "editors/grid_map/pick_distance", 5000.0, "1,8192,0.1,or_greater");
-	EDITOR_SETTING_USAGE(Variant::INT, PROPERTY_HINT_RANGE, "editors/grid_map/palette_min_width", 230, "100,500,1", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_RESTART_IF_CHANGED);
 	EDITOR_SETTING_BASIC(Variant::INT, PROPERTY_HINT_RANGE, "editors/grid_map/preview_size", 64, "16,128,1")
 
 	// 3D
@@ -885,6 +897,7 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 	EDITOR_SETTING_USAGE(Variant::COLOR, PROPERTY_HINT_NONE, "editors/3d_gizmos/gizmo_colors/spring_bone_joint", Color(0.8, 0.9, 0.6), "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_RESTART_IF_CHANGED)
 	EDITOR_SETTING_USAGE(Variant::COLOR, PROPERTY_HINT_NONE, "editors/3d_gizmos/gizmo_colors/spring_bone_collision", Color(0.6, 0.8, 0.9), "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_RESTART_IF_CHANGED)
 	EDITOR_SETTING_USAGE(Variant::COLOR, PROPERTY_HINT_NONE, "editors/3d_gizmos/gizmo_colors/spring_bone_inside_collision", Color(0.9, 0.6, 0.8), "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_RESTART_IF_CHANGED)
+	EDITOR_SETTING_USAGE(Variant::COLOR, PROPERTY_HINT_NONE, "editors/3d_gizmos/gizmo_colors/ik_chain", Color(0.6, 0.9, 0.8), "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_RESTART_IF_CHANGED)
 	_initial_set("editors/3d_gizmos/gizmo_settings/bone_axis_length", (float)0.1);
 	EDITOR_SETTING(Variant::INT, PROPERTY_HINT_ENUM, "editors/3d_gizmos/gizmo_settings/bone_shape", 1, "Wire,Octahedron");
 	EDITOR_SETTING_USAGE(Variant::FLOAT, PROPERTY_HINT_NONE, "editors/3d_gizmos/gizmo_settings/path3d_tilt_disk_size", 0.8, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_RESTART_IF_CHANGED)
@@ -932,6 +945,7 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 	EDITOR_SETTING(Variant::FLOAT, PROPERTY_HINT_RANGE, "editors/3d/navigation_feel/orbit_inertia", 0.0, "0,1,0.001")
 	EDITOR_SETTING(Variant::FLOAT, PROPERTY_HINT_RANGE, "editors/3d/navigation_feel/translation_inertia", 0.05, "0,1,0.001")
 	EDITOR_SETTING(Variant::FLOAT, PROPERTY_HINT_RANGE, "editors/3d/navigation_feel/zoom_inertia", 0.05, "0,1,0.001")
+	EDITOR_SETTING(Variant::FLOAT, PROPERTY_HINT_RANGE, "editors/3d/navigation_feel/angle_snap_threshold", 10.0, "1,20,0.1,degrees")
 	_initial_set("editors/3d/navigation/show_viewport_rotation_gizmo", true);
 	_initial_set("editors/3d/navigation/show_viewport_navigation_gizmo", DisplayServer::get_singleton()->is_touchscreen_available());
 
@@ -945,7 +959,7 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 
 	// 3D: Manipulator
 	EDITOR_SETTING(Variant::INT, PROPERTY_HINT_RANGE, "editors/3d/manipulator_gizmo_size", 80, "16,160,1");
-	EDITOR_SETTING_USAGE(Variant::FLOAT, PROPERTY_HINT_RANGE, "editors/3d/manipulator_gizmo_opacity", 0.9, "0,1,0.01", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_RESTART_IF_CHANGED)
+	EDITOR_SETTING(Variant::FLOAT, PROPERTY_HINT_RANGE, "editors/3d/manipulator_gizmo_opacity", 0.9, "0,1,0.01")
 
 	// 2D
 	_initial_set("editors/2d/grid_color", Color(1.0, 1.0, 1.0, 0.07), true);
@@ -997,6 +1011,7 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 	_initial_set("editors/animation/confirm_insert_track", true, true);
 	_initial_set("editors/animation/default_create_bezier_tracks", false, true);
 	_initial_set("editors/animation/default_create_reset_tracks", true, true);
+	_initial_set("editors/animation/insert_at_current_time", false, true);
 	_initial_set("editors/animation/onion_layers_past_color", Color(1, 0, 0));
 	_initial_set("editors/animation/onion_layers_future_color", Color(0, 1, 0));
 
@@ -1140,49 +1155,6 @@ void EditorSettings::_load_defaults(Ref<ConfigFile> p_extra_config) {
 	}
 }
 
-void EditorSettings::_load_godot2_text_editor_theme() {
-	// Godot 2 is only a dark theme; it doesn't have a light theme counterpart.
-	_initial_set("text_editor/theme/highlighting/symbol_color", Color(0.73, 0.87, 1.0), true);
-	_initial_set("text_editor/theme/highlighting/keyword_color", Color(1.0, 1.0, 0.7), true);
-	_initial_set("text_editor/theme/highlighting/control_flow_keyword_color", Color(1.0, 0.85, 0.7), true);
-	_initial_set("text_editor/theme/highlighting/base_type_color", Color(0.64, 1.0, 0.83), true);
-	_initial_set("text_editor/theme/highlighting/engine_type_color", Color(0.51, 0.83, 1.0), true);
-	_initial_set("text_editor/theme/highlighting/user_type_color", Color(0.42, 0.67, 0.93), true);
-	_initial_set("text_editor/theme/highlighting/comment_color", Color(0.4, 0.4, 0.4), true);
-	_initial_set("text_editor/theme/highlighting/doc_comment_color", Color(0.5, 0.6, 0.7), true);
-	_initial_set("text_editor/theme/highlighting/string_color", Color(0.94, 0.43, 0.75), true);
-	_initial_set("text_editor/theme/highlighting/background_color", Color(0.13, 0.12, 0.15), true);
-	_initial_set("text_editor/theme/highlighting/completion_background_color", Color(0.17, 0.16, 0.2));
-	_initial_set("text_editor/theme/highlighting/completion_selected_color", Color(0.26, 0.26, 0.27));
-	_initial_set("text_editor/theme/highlighting/completion_existing_color", Color(0.87, 0.87, 0.87, 0.13));
-	_initial_set("text_editor/theme/highlighting/completion_scroll_color", Color(1, 1, 1, 0.29));
-	_initial_set("text_editor/theme/highlighting/completion_scroll_hovered_color", Color(1, 1, 1, 0.4));
-	_initial_set("text_editor/theme/highlighting/completion_font_color", Color(0.67, 0.67, 0.67));
-	_initial_set("text_editor/theme/highlighting/text_color", Color(0.67, 0.67, 0.67), true);
-	_initial_set("text_editor/theme/highlighting/line_number_color", Color(0.67, 0.67, 0.67, 0.4), true);
-	_initial_set("text_editor/theme/highlighting/safe_line_number_color", Color(0.67, 0.78, 0.67, 0.6), true);
-	_initial_set("text_editor/theme/highlighting/caret_color", Color(0.67, 0.67, 0.67), true);
-	_initial_set("text_editor/theme/highlighting/caret_background_color", Color(0, 0, 0), true);
-	_initial_set("text_editor/theme/highlighting/text_selected_color", Color(0, 0, 0, 0), true);
-	_initial_set("text_editor/theme/highlighting/selection_color", Color(0.41, 0.61, 0.91, 0.35), true);
-	_initial_set("text_editor/theme/highlighting/brace_mismatch_color", Color(1, 0.2, 0.2), true);
-	_initial_set("text_editor/theme/highlighting/current_line_color", Color(0.3, 0.5, 0.8, 0.15), true);
-	_initial_set("text_editor/theme/highlighting/line_length_guideline_color", Color(0.3, 0.5, 0.8, 0.1), true);
-	_initial_set("text_editor/theme/highlighting/word_highlighted_color", Color(0.8, 0.9, 0.9, 0.15), true);
-	_initial_set("text_editor/theme/highlighting/number_color", Color(0.92, 0.58, 0.2), true);
-	_initial_set("text_editor/theme/highlighting/function_color", Color(0.4, 0.64, 0.81), true);
-	_initial_set("text_editor/theme/highlighting/member_variable_color", Color(0.9, 0.31, 0.35), true);
-	_initial_set("text_editor/theme/highlighting/mark_color", Color(1.0, 0.4, 0.4, 0.4), true);
-	_initial_set("text_editor/theme/highlighting/warning_color", Color(1.0, 0.8, 0.4, 0.1), true);
-	_initial_set("text_editor/theme/highlighting/bookmark_color", Color(0.08, 0.49, 0.98));
-	_initial_set("text_editor/theme/highlighting/breakpoint_color", Color(0.9, 0.29, 0.3));
-	_initial_set("text_editor/theme/highlighting/executing_line_color", Color(0.98, 0.89, 0.27));
-	_initial_set("text_editor/theme/highlighting/code_folding_color", Color(0.8, 0.8, 0.8, 0.8));
-	_initial_set("text_editor/theme/highlighting/folded_code_region_color", Color(0.68, 0.46, 0.77, 0.2));
-	_initial_set("text_editor/theme/highlighting/search_result_color", Color(0.05, 0.25, 0.05, 1));
-	_initial_set("text_editor/theme/highlighting/search_result_border_color", Color(0.41, 0.61, 0.91, 0.38));
-}
-
 void EditorSettings::_load_default_visual_shader_editor_theme() {
 	// Connection type colors
 	_initial_set("editors/visual_editors/connection_colors/scalar_color", Color(0.55, 0.55, 0.55));
@@ -1208,23 +1180,19 @@ void EditorSettings::_load_default_visual_shader_editor_theme() {
 }
 
 String EditorSettings::_guess_exec_args_for_extenal_editor(const String &p_path) {
-	Ref<RegEx> regex;
-	regex.instantiate();
-
-	const String editor_pattern = R"([\\/]((?:jetbrains\s*)?rider(?:\s*(eap|\d{4}\.\d+|\d{4}\.\d+\s*dev)?)?|visual\s*studio\s*code|subl(ime\s*text)?|sublime_text|(g)?vim|emacs|atom|geany|kate|code|(vs)?codium)(?:\.app|\.exe|\.bat|\.sh)?)";
-	regex->compile(editor_pattern);
-	Ref<RegExMatch> editor_match = regex->search(p_path.to_lower());
+	Ref<RegEx> regex = RegEx::create_from_string(R"((?:jetbrains\s*)?rider(?:\s*(eap|\d{4}\.\d+|\d{4}\.\d+\s*dev)?)?|visual\s*studio\s*code|subl(ime\s*text)?|sublime_text|zed(it(or)?)?|(g)?vim|emacs|atom|geany|kate|code|(vs)?codium)");
+	Ref<RegExMatch> editor_match = regex->search(p_path.to_lower().get_file().get_basename());
 
 	if (editor_match.is_null()) {
 		return String();
 	}
 
-	const String editor = editor_match->get_string(1).to_lower();
+	const String editor = editor_match->get_string(0).to_lower();
 	String new_exec_flags = "{file}";
 
 	if (editor.begins_with("rider")) {
 		new_exec_flags = "{project} --line {line} {file}";
-	} else if (editor == "subl" || editor == "sublime text" || editor == "sublime_text") {
+	} else if (editor == "subl" || editor == "sublime text" || editor == "sublime_text" || editor == "zed" || editor == "zedit" || editor == "zeditor") {
 		new_exec_flags = "{project} {file}:{line}:{col}";
 	} else if (editor == "vim" || editor == "gvim") {
 		new_exec_flags = "\"+call cursor({line}, {col})\" {file}";
@@ -1241,39 +1209,13 @@ String EditorSettings::_guess_exec_args_for_extenal_editor(const String &p_path)
 	return new_exec_flags;
 }
 
-bool EditorSettings::_save_text_editor_theme(const String &p_file) {
-	String theme_section = "color_theme";
-	Ref<ConfigFile> cf = memnew(ConfigFile); // hex is better?
-
-	List<String> keys;
-
-	for (const KeyValue<String, VariantContainer> &E : props) {
-		keys.push_back(E.key);
-	}
-
-	keys.sort();
-
-	for (const String &key : keys) {
-		if (key.begins_with("text_editor/theme/highlighting/") && key.contains("color")) {
-			cf->set_value(theme_section, key.replace("text_editor/theme/highlighting/", ""), ((Color)props[key].variant).to_html());
-		}
-	}
-
-	Error err = cf->save(p_file);
-
-	return err == OK;
-}
-
-bool EditorSettings::_is_default_text_editor_theme(const String &p_theme_name) {
-	return p_theme_name == "default" || p_theme_name == "godot 2" || p_theme_name == "custom";
-}
-
 const String EditorSettings::_get_project_metadata_path() const {
 	return EditorPaths::get_singleton()->get_project_settings_dir().path_join("project_metadata.cfg");
 }
 
 #ifndef DISABLE_DEPRECATED
 void EditorSettings::_remove_deprecated_settings() {
+	erase("interface/theme/preset");
 	erase("network/connection/engine_version_update_mode");
 	erase("run/output/always_open_output_on_play");
 	erase("run/output/always_close_output_on_stop");
@@ -1357,10 +1299,10 @@ void EditorSettings::create() {
 
 		print_verbose("EditorSettings: Load OK!");
 
-		singleton->setup_language();
+		singleton->setup_language(true);
 		singleton->setup_network();
 		singleton->load_favorites_and_recent_dirs();
-		singleton->list_text_editor_themes();
+		singleton->update_text_editor_themes_list();
 #ifndef DISABLE_DEPRECATED
 		singleton->_remove_deprecated_settings();
 #endif
@@ -1384,27 +1326,27 @@ fail:
 	singleton->set_path(config_file_path, true);
 	singleton->save_changed_setting = true;
 	singleton->_load_defaults(extra_config);
-	singleton->setup_language();
+	singleton->setup_language(true);
 	singleton->setup_network();
-	singleton->list_text_editor_themes();
+	singleton->update_text_editor_themes_list();
 }
 
-void EditorSettings::setup_language() {
-	String lang = _EDITOR_GET("interface/editor/editor_language");
+void EditorSettings::setup_language(bool p_initial_setup) {
+	String lang = get_language();
+	if (p_initial_setup) {
+		String lang_ov = Main::get_locale_override();
+		if (!lang_ov.is_empty()) {
+			lang = lang_ov;
+		}
+	}
 
 	if (lang == "en") {
 		TranslationServer::get_singleton()->set_locale(lang);
 		return; // Default, nothing to do.
 	}
-	// Load editor translation for configured/detected locale.
+
 	load_editor_translations(lang);
-	load_property_translations(lang);
-
-	// Load class reference translation.
 	load_doc_translations(lang);
-
-	// Load extractable translation for projects.
-	load_extractable_translations(lang);
 
 	TranslationServer::get_singleton()->set_locale(lang);
 }
@@ -1579,7 +1521,8 @@ Variant _EDITOR_DEF(const String &p_setting, const Variant &p_default, bool p_re
 }
 
 Variant _EDITOR_GET(const String &p_setting) {
-	ERR_FAIL_COND_V(!EditorSettings::get_singleton() || !EditorSettings::get_singleton()->has_setting(p_setting), Variant());
+	ERR_FAIL_NULL_V_MSG(EditorSettings::get_singleton(), Variant(), vformat(R"(EditorSettings not instantiated yet when getting setting "%s".)", p_setting));
+	ERR_FAIL_COND_V_MSG(!EditorSettings::get_singleton()->has_setting(p_setting), Variant(), vformat(R"(Editor setting "%s" does not exist.)", p_setting));
 	return EditorSettings::get_singleton()->get_setting(p_setting);
 }
 
@@ -1620,9 +1563,7 @@ void EditorSettings::set_project_metadata(const String &p_section, const String 
 		}
 	}
 	project_metadata->set_value(p_section, p_key, p_data);
-
-	Error err = project_metadata->save(path);
-	ERR_FAIL_COND_MSG(err != OK, "Cannot save project metadata to file '" + path + "'.");
+	project_metadata_dirty = true;
 }
 
 Variant EditorSettings::get_project_metadata(const String &p_section, const String &p_key, const Variant &p_default) const {
@@ -1634,6 +1575,16 @@ Variant EditorSettings::get_project_metadata(const String &p_section, const Stri
 		ERR_FAIL_COND_V_MSG(err != OK && err != ERR_FILE_NOT_FOUND, p_default, "Cannot load project metadata from file '" + path + "'.");
 	}
 	return project_metadata->get_value(p_section, p_key, p_default);
+}
+
+void EditorSettings::save_project_metadata() {
+	if (!project_metadata_dirty) {
+		return;
+	}
+	const String path = _get_project_metadata_path();
+	Error err = project_metadata->save(path);
+	ERR_FAIL_COND_MSG(err != OK, "Cannot save project metadata to file '" + path + "'.");
+	project_metadata_dirty = false;
 }
 
 void EditorSettings::set_favorites(const Vector<String> &p_favorites) {
@@ -1748,118 +1699,89 @@ void EditorSettings::load_favorites_and_recent_dirs() {
 	}
 }
 
-void EditorSettings::list_text_editor_themes() {
+HashMap<StringName, Color> EditorSettings::get_godot2_text_editor_theme() {
+	// Godot 2 is only a dark theme; it doesn't have a light theme counterpart.
+	HashMap<StringName, Color> colors;
+	colors["text_editor/theme/highlighting/symbol_color"] = Color(0.73, 0.87, 1.0);
+	colors["text_editor/theme/highlighting/keyword_color"] = Color(1.0, 1.0, 0.7);
+	colors["text_editor/theme/highlighting/control_flow_keyword_color"] = Color(1.0, 0.85, 0.7);
+	colors["text_editor/theme/highlighting/base_type_color"] = Color(0.64, 1.0, 0.83);
+	colors["text_editor/theme/highlighting/engine_type_color"] = Color(0.51, 0.83, 1.0);
+	colors["text_editor/theme/highlighting/user_type_color"] = Color(0.42, 0.67, 0.93);
+	colors["text_editor/theme/highlighting/comment_color"] = Color(0.4, 0.4, 0.4);
+	colors["text_editor/theme/highlighting/doc_comment_color"] = Color(0.5, 0.6, 0.7);
+	colors["text_editor/theme/highlighting/string_color"] = Color(0.94, 0.43, 0.75);
+	colors["text_editor/theme/highlighting/background_color"] = Color(0.13, 0.12, 0.15);
+	colors["text_editor/theme/highlighting/completion_background_color"] = Color(0.17, 0.16, 0.2);
+	colors["text_editor/theme/highlighting/completion_selected_color"] = Color(0.26, 0.26, 0.27);
+	colors["text_editor/theme/highlighting/completion_existing_color"] = Color(0.87, 0.87, 0.87, 0.13);
+	colors["text_editor/theme/highlighting/completion_scroll_color"] = Color(1, 1, 1, 0.29);
+	colors["text_editor/theme/highlighting/completion_scroll_hovered_color"] = Color(1, 1, 1, 0.4);
+	colors["text_editor/theme/highlighting/completion_font_color"] = Color(0.67, 0.67, 0.67);
+	colors["text_editor/theme/highlighting/text_color"] = Color(0.67, 0.67, 0.67);
+	colors["text_editor/theme/highlighting/line_number_color"] = Color(0.67, 0.67, 0.67, 0.4);
+	colors["text_editor/theme/highlighting/safe_line_number_color"] = Color(0.67, 0.78, 0.67, 0.6);
+	colors["text_editor/theme/highlighting/caret_color"] = Color(0.67, 0.67, 0.67);
+	colors["text_editor/theme/highlighting/caret_background_color"] = Color(0, 0, 0);
+	colors["text_editor/theme/highlighting/text_selected_color"] = Color(0, 0, 0, 0);
+	colors["text_editor/theme/highlighting/selection_color"] = Color(0.41, 0.61, 0.91, 0.35);
+	colors["text_editor/theme/highlighting/brace_mismatch_color"] = Color(1, 0.2, 0.2);
+	colors["text_editor/theme/highlighting/current_line_color"] = Color(0.3, 0.5, 0.8, 0.15);
+	colors["text_editor/theme/highlighting/line_length_guideline_color"] = Color(0.3, 0.5, 0.8, 0.1);
+	colors["text_editor/theme/highlighting/word_highlighted_color"] = Color(0.8, 0.9, 0.9, 0.15);
+	colors["text_editor/theme/highlighting/number_color"] = Color(0.92, 0.58, 0.2);
+	colors["text_editor/theme/highlighting/function_color"] = Color(0.4, 0.64, 0.81);
+	colors["text_editor/theme/highlighting/member_variable_color"] = Color(0.9, 0.31, 0.35);
+	colors["text_editor/theme/highlighting/mark_color"] = Color(1.0, 0.4, 0.4, 0.4);
+	colors["text_editor/theme/highlighting/warning_color"] = Color(1.0, 0.8, 0.4, 0.1);
+	colors["text_editor/theme/highlighting/bookmark_color"] = Color(0.08, 0.49, 0.98);
+	colors["text_editor/theme/highlighting/breakpoint_color"] = Color(0.9, 0.29, 0.3);
+	colors["text_editor/theme/highlighting/executing_line_color"] = Color(0.98, 0.89, 0.27);
+	colors["text_editor/theme/highlighting/code_folding_color"] = Color(0.8, 0.8, 0.8, 0.8);
+	colors["text_editor/theme/highlighting/folded_code_region_color"] = Color(0.68, 0.46, 0.77, 0.2);
+	colors["text_editor/theme/highlighting/search_result_color"] = Color(0.05, 0.25, 0.05, 1);
+	colors["text_editor/theme/highlighting/search_result_border_color"] = Color(0.41, 0.61, 0.91, 0.38);
+	colors["text_editor/theme/highlighting/gdscript/function_definition_color"] = Color(0.4, 0.9, 1.0);
+
+	colors["text_editor/theme/highlighting/gdscript/global_function_color"] = Color(0.64, 0.64, 0.96);
+	colors["text_editor/theme/highlighting/gdscript/node_path_color"] = Color(0.72, 0.77, 0.49);
+	colors["text_editor/theme/highlighting/gdscript/node_reference_color"] = Color(0.39, 0.76, 0.35);
+	colors["text_editor/theme/highlighting/gdscript/annotation_color"] = Color(1.0, 0.7, 0.45);
+	colors["text_editor/theme/highlighting/gdscript/string_name_color"] = Color(1.0, 0.76, 0.65);
+	colors["text_editor/theme/highlighting/comment_markers/critical_color"] = Color(0.77, 0.35, 0.35);
+	colors["text_editor/theme/highlighting/comment_markers/warning_color"] = Color(0.72, 0.61, 0.48);
+	colors["text_editor/theme/highlighting/comment_markers/notice_color"] = Color(0.56, 0.67, 0.51);
+	return colors;
+}
+
+bool EditorSettings::is_default_text_editor_theme(const String &p_theme_name) {
+	return p_theme_name == "default" || p_theme_name == "godot 2" || p_theme_name == "custom";
+}
+
+void EditorSettings::update_text_editor_themes_list() {
 	String themes = "Default,Godot 2,Custom";
 
 	Ref<DirAccess> d = DirAccess::open(EditorPaths::get_singleton()->get_text_editor_themes_dir());
-	if (d.is_valid()) {
-		List<String> custom_themes;
-		d->list_dir_begin();
-		String file = d->get_next();
-		while (!file.is_empty()) {
-			if (file.get_extension() == "tet" && !_is_default_text_editor_theme(file.get_basename().to_lower())) {
-				custom_themes.push_back(file.get_basename());
-			}
-			file = d->get_next();
-		}
-		d->list_dir_end();
-
-		custom_themes.sort();
-		for (const String &E : custom_themes) {
-			themes += "," + E;
-		}
-	}
-	add_property_hint(PropertyInfo(Variant::STRING, "text_editor/theme/color_theme", PROPERTY_HINT_ENUM, themes));
-}
-
-void EditorSettings::load_text_editor_theme() {
-	String p_file = get("text_editor/theme/color_theme");
-
-	if (_is_default_text_editor_theme(p_file.get_file().to_lower())) {
-		if (p_file == "Godot 2") {
-			_load_godot2_text_editor_theme();
-		}
-		return; // sorry for "Settings changed" console spam
-	}
-
-	String theme_path = EditorPaths::get_singleton()->get_text_editor_themes_dir().path_join(p_file + ".tet");
-
-	Ref<ConfigFile> cf = memnew(ConfigFile);
-	Error err = cf->load(theme_path);
-
-	if (err != OK) {
+	if (d.is_null()) {
 		return;
 	}
 
-	Vector<String> keys = cf->get_section_keys("color_theme");
-
-	for (const String &key : keys) {
-		String val = cf->get_value("color_theme", key);
-
-		// don't load if it's not already there!
-		if (has_setting("text_editor/theme/highlighting/" + key)) {
-			// make sure it is actually a color
-			if (val.is_valid_html_color() && key.contains("color")) {
-				props["text_editor/theme/highlighting/" + key].variant = Color::html(val); // change manually to prevent "Settings changed" console spam
-			}
+	PackedStringArray custom_themes;
+	d->list_dir_begin();
+	String file = d->get_next();
+	while (!file.is_empty()) {
+		if (file.get_extension() == "tet" && !is_default_text_editor_theme(file.get_basename().to_lower())) {
+			custom_themes.push_back(file.get_basename());
 		}
+		file = d->get_next();
 	}
-	emit_signal(SNAME("settings_changed"));
-	// if it doesn't load just use what is currently loaded
-}
+	d->list_dir_end();
 
-bool EditorSettings::import_text_editor_theme(const String &p_file) {
-	if (!p_file.ends_with(".tet")) {
-		return false;
-	} else {
-		if (p_file.get_file().to_lower() == "default.tet") {
-			return false;
-		}
-
-		Ref<DirAccess> d = DirAccess::open(EditorPaths::get_singleton()->get_text_editor_themes_dir());
-		if (d.is_valid()) {
-			d->copy(p_file, EditorPaths::get_singleton()->get_text_editor_themes_dir().path_join(p_file.get_file()));
-			return true;
-		}
+	if (!custom_themes.is_empty()) {
+		custom_themes.sort();
+		themes += "," + String(",").join(custom_themes);
 	}
-	return false;
-}
-
-bool EditorSettings::save_text_editor_theme() {
-	String p_file = get("text_editor/theme/color_theme");
-
-	if (_is_default_text_editor_theme(p_file.get_file().to_lower())) {
-		return false;
-	}
-	String theme_path = EditorPaths::get_singleton()->get_text_editor_themes_dir().path_join(p_file + ".tet");
-	return _save_text_editor_theme(theme_path);
-}
-
-bool EditorSettings::save_text_editor_theme_as(String p_file) {
-	if (!p_file.ends_with(".tet")) {
-		p_file += ".tet";
-	}
-
-	if (_is_default_text_editor_theme(p_file.get_file().to_lower().trim_suffix(".tet"))) {
-		return false;
-	}
-	if (_save_text_editor_theme(p_file)) {
-		// switch to theme is saved in the theme directory
-		list_text_editor_themes();
-		String theme_name = p_file.substr(0, p_file.length() - 4).get_file();
-
-		if (p_file.get_base_dir() == EditorPaths::get_singleton()->get_text_editor_themes_dir()) {
-			_initial_set("text_editor/theme/color_theme", theme_name);
-			load_text_editor_theme();
-		}
-		return true;
-	}
-	return false;
-}
-
-bool EditorSettings::is_default_text_editor_theme() {
-	String p_file = get("text_editor/theme/color_theme");
-	return _is_default_text_editor_theme(p_file.get_file().to_lower());
+	add_property_hint(PropertyInfo(Variant::STRING, "text_editor/theme/color_theme", PROPERTY_HINT_ENUM, themes));
 }
 
 Vector<String> EditorSettings::get_script_templates(const String &p_extension, const String &p_custom_path) {
@@ -1917,6 +1839,9 @@ float EditorSettings::get_auto_display_scale() {
 		return 1.0;
 	}
 
+#if defined(WINDOWS_ENABLED)
+	return DisplayServer::get_singleton()->screen_get_dpi(screen) / 96.0;
+#else
 	// Use the smallest dimension to use a correct display scale on portrait displays.
 	const int smallest_dimension = MIN(DisplayServer::get_singleton()->screen_get_size(screen).x, DisplayServer::get_singleton()->screen_get_size(screen).y);
 	if (DisplayServer::get_singleton()->screen_get_dpi(screen) >= 192 && smallest_dimension >= 1400) {
@@ -1932,7 +1857,40 @@ float EditorSettings::get_auto_display_scale() {
 		return 0.75;
 	}
 	return 1.0;
-#endif
+#endif // defined(WINDOWS_ENABLED)
+
+#endif // defined(MACOS_ENABLED) || defined(ANDROID_ENABLED)
+}
+
+String EditorSettings::get_language() const {
+	const String language = has_setting("interface/editor/editor_language") ? get("interface/editor/editor_language") : "auto";
+	if (language != "auto") {
+		return language;
+	}
+
+	if (auto_language.is_empty()) {
+		// Skip locales which we can't render properly.
+		const LocalVector<String> locales_to_skip = _get_skipped_locales();
+		const String host_lang = OS::get_singleton()->get_locale();
+
+		String best = "en";
+		int best_score = 0;
+		for (const String &locale : get_editor_locales()) {
+			// Test against language code without regional variants (e.g. ur_PK).
+			String lang_code = locale.get_slicec('_', 0);
+			if (locales_to_skip.has(lang_code)) {
+				continue;
+			}
+
+			int score = TranslationServer::get_singleton()->compare_locales(host_lang, locale);
+			if (score > 0 && score >= best_score) {
+				best = locale;
+				best_score = score;
+			}
+		}
+		auto_language = best;
+	}
+	return auto_language;
 }
 
 // Shortcuts

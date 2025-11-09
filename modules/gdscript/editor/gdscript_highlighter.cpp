@@ -437,7 +437,9 @@ Dictionary GDScriptSyntaxHighlighter::_get_line_syntax_highlighting_impl(int p_l
 			if (col != Color()) {
 				for (int k = j - 1; k >= 0; k--) {
 					if (str[k] == '.') {
-						col = Color(); // Keyword, member & global func indexing not allowed.
+						// Keyword, member, & global func indexing not allowed,
+						// but don't reset color if prev was a number like "5."
+						col = (prev_type == NUMBER) ? col : Color();
 						break;
 					} else if (str[k] > 32) {
 						break;
@@ -715,11 +717,11 @@ void GDScriptSyntaxHighlighter::_update_cache() {
 
 	/* Engine types. */
 	const Color types_color = EDITOR_GET("text_editor/theme/highlighting/engine_type_color");
-	List<StringName> types;
-	ClassDB::get_class_list(&types);
-	for (const StringName &E : types) {
-		if (ClassDB::is_class_exposed(E)) {
-			class_names[E] = types_color;
+	LocalVector<StringName> types;
+	ClassDB::get_class_list(types);
+	for (const StringName &type : types) {
+		if (ClassDB::is_class_exposed(type)) {
+			class_names[type] = types_color;
 		}
 	}
 
@@ -732,10 +734,10 @@ void GDScriptSyntaxHighlighter::_update_cache() {
 
 	/* User types. */
 	const Color usertype_color = EDITOR_GET("text_editor/theme/highlighting/user_type_color");
-	List<StringName> global_classes;
-	ScriptServer::get_global_class_list(&global_classes);
-	for (const StringName &E : global_classes) {
-		class_names[E] = usertype_color;
+	LocalVector<StringName> global_classes;
+	ScriptServer::get_global_class_list(global_classes);
+	for (const StringName &class_name : global_classes) {
+		class_names[class_name] = usertype_color;
 	}
 
 	/* Autoloads. */
@@ -899,85 +901,6 @@ void GDScriptSyntaxHighlighter::_update_cache() {
 			}
 			scr_class = scr_class->get_base_script();
 		}
-	}
-
-	const String text_edit_color_theme = EDITOR_GET("text_editor/theme/color_theme");
-	const bool godot_2_theme = text_edit_color_theme == "Godot 2";
-
-	if (godot_2_theme || EditorThemeManager::is_dark_theme()) {
-		function_definition_color = Color(0.4, 0.9, 1.0);
-		global_function_color = Color(0.64, 0.64, 0.96);
-		node_path_color = Color(0.72, 0.77, 0.49);
-		node_ref_color = Color(0.39, 0.76, 0.35);
-		annotation_color = Color(1.0, 0.7, 0.45);
-		string_name_color = Color(1.0, 0.76, 0.65);
-		comment_marker_colors[COMMENT_MARKER_CRITICAL] = Color(0.77, 0.35, 0.35);
-		comment_marker_colors[COMMENT_MARKER_WARNING] = Color(0.72, 0.61, 0.48);
-		comment_marker_colors[COMMENT_MARKER_NOTICE] = Color(0.56, 0.67, 0.51);
-	} else {
-		function_definition_color = Color(0, 0.6, 0.6);
-		global_function_color = Color(0.36, 0.18, 0.72);
-		node_path_color = Color(0.18, 0.55, 0);
-		node_ref_color = Color(0.0, 0.5, 0);
-		annotation_color = Color(0.8, 0.37, 0);
-		string_name_color = Color(0.8, 0.56, 0.45);
-		comment_marker_colors[COMMENT_MARKER_CRITICAL] = Color(0.8, 0.14, 0.14);
-		comment_marker_colors[COMMENT_MARKER_WARNING] = Color(0.75, 0.39, 0.03);
-		comment_marker_colors[COMMENT_MARKER_NOTICE] = Color(0.24, 0.54, 0.09);
-	}
-
-	// TODO: Move to editor_settings.cpp
-	EDITOR_DEF("text_editor/theme/highlighting/gdscript/function_definition_color", function_definition_color);
-	EDITOR_DEF("text_editor/theme/highlighting/gdscript/global_function_color", global_function_color);
-	EDITOR_DEF("text_editor/theme/highlighting/gdscript/node_path_color", node_path_color);
-	EDITOR_DEF("text_editor/theme/highlighting/gdscript/node_reference_color", node_ref_color);
-	EDITOR_DEF("text_editor/theme/highlighting/gdscript/annotation_color", annotation_color);
-	EDITOR_DEF("text_editor/theme/highlighting/gdscript/string_name_color", string_name_color);
-	EDITOR_DEF("text_editor/theme/highlighting/comment_markers/critical_color", comment_marker_colors[COMMENT_MARKER_CRITICAL]);
-	EDITOR_DEF("text_editor/theme/highlighting/comment_markers/warning_color", comment_marker_colors[COMMENT_MARKER_WARNING]);
-	EDITOR_DEF("text_editor/theme/highlighting/comment_markers/notice_color", comment_marker_colors[COMMENT_MARKER_NOTICE]);
-	// The list is based on <https://github.com/KDE/syntax-highlighting/blob/master/data/syntax/alert.xml>.
-	EDITOR_DEF("text_editor/theme/highlighting/comment_markers/critical_list", "ALERT,ATTENTION,CAUTION,CRITICAL,DANGER,SECURITY");
-	EDITOR_DEF("text_editor/theme/highlighting/comment_markers/warning_list", "BUG,DEPRECATED,FIXME,HACK,TASK,TBD,TODO,WARNING");
-	EDITOR_DEF("text_editor/theme/highlighting/comment_markers/notice_list", "INFO,NOTE,NOTICE,TEST,TESTING");
-
-	if (text_edit_color_theme == "Default" || godot_2_theme) {
-		EditorSettings::get_singleton()->set_initial_value(
-				"text_editor/theme/highlighting/gdscript/function_definition_color",
-				function_definition_color,
-				true);
-		EditorSettings::get_singleton()->set_initial_value(
-				"text_editor/theme/highlighting/gdscript/global_function_color",
-				global_function_color,
-				true);
-		EditorSettings::get_singleton()->set_initial_value(
-				"text_editor/theme/highlighting/gdscript/node_path_color",
-				node_path_color,
-				true);
-		EditorSettings::get_singleton()->set_initial_value(
-				"text_editor/theme/highlighting/gdscript/node_reference_color",
-				node_ref_color,
-				true);
-		EditorSettings::get_singleton()->set_initial_value(
-				"text_editor/theme/highlighting/gdscript/annotation_color",
-				annotation_color,
-				true);
-		EditorSettings::get_singleton()->set_initial_value(
-				"text_editor/theme/highlighting/gdscript/string_name_color",
-				string_name_color,
-				true);
-		EditorSettings::get_singleton()->set_initial_value(
-				"text_editor/theme/highlighting/comment_markers/critical_color",
-				comment_marker_colors[COMMENT_MARKER_CRITICAL],
-				true);
-		EditorSettings::get_singleton()->set_initial_value(
-				"text_editor/theme/highlighting/comment_markers/warning_color",
-				comment_marker_colors[COMMENT_MARKER_WARNING],
-				true);
-		EditorSettings::get_singleton()->set_initial_value(
-				"text_editor/theme/highlighting/comment_markers/notice_color",
-				comment_marker_colors[COMMENT_MARKER_NOTICE],
-				true);
 	}
 
 	function_definition_color = EDITOR_GET("text_editor/theme/highlighting/gdscript/function_definition_color");

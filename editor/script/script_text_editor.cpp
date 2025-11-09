@@ -31,15 +31,20 @@
 #include "script_text_editor.h"
 
 #include "core/config/project_settings.h"
+#include "core/io/dir_access.h"
 #include "core/io/json.h"
 #include "core/math/expression.h"
 #include "core/os/keyboard.h"
 #include "editor/debugger/editor_debugger_node.h"
 #include "editor/doc/editor_help.h"
+#include "editor/docks/filesystem_dock.h"
+#include "editor/editor_interface.h"
 #include "editor/editor_node.h"
 #include "editor/editor_string_names.h"
 #include "editor/gui/editor_toaster.h"
 #include "editor/inspector/editor_context_menu_plugin.h"
+#include "editor/inspector/editor_inspector.h"
+#include "editor/inspector/multi_node_edit.h"
 #include "editor/settings/editor_command_palette.h"
 #include "editor/settings/editor_settings.h"
 #include "editor/themes/editor_scale.h"
@@ -70,7 +75,7 @@ void ConnectionInfoDialog::popup_connections(const String &p_method, const Vecto
 			TreeItem *node_item = tree->create_item(root);
 
 			node_item->set_text(0, Object::cast_to<Node>(connection.signal.get_object())->get_name());
-			node_item->set_icon(0, EditorNode::get_singleton()->get_object_icon(connection.signal.get_object(), "Node"));
+			node_item->set_icon(0, EditorNode::get_singleton()->get_object_icon(connection.signal.get_object()));
 			node_item->set_selectable(0, false);
 			node_item->set_editable(0, false);
 
@@ -81,7 +86,7 @@ void ConnectionInfoDialog::popup_connections(const String &p_method, const Vecto
 			node_item->set_editable(1, false);
 
 			node_item->set_text(2, Object::cast_to<Node>(connection.callable.get_object())->get_name());
-			node_item->set_icon(2, EditorNode::get_singleton()->get_object_icon(connection.callable.get_object(), "Node"));
+			node_item->set_icon(2, EditorNode::get_singleton()->get_object_icon(connection.callable.get_object()));
 			node_item->set_selectable(2, false);
 			node_item->set_editable(2, false);
 		}
@@ -143,6 +148,10 @@ void ScriptTextEditor::apply_code() {
 	}
 	script->set_source_code(code_editor->get_text_editor()->get_text());
 	script->update_exports();
+	if (!pending_dragged_exports.is_empty()) {
+		_assign_dragged_export_variables();
+	}
+
 	code_editor->get_text_editor()->get_syntax_highlighter()->update_cache();
 }
 
@@ -174,6 +183,11 @@ void ScriptTextEditor::enable_editor(Control *p_shortcut_context) {
 	_enable_code_editor();
 
 	_validate_script();
+
+	if (pending_state != Variant()) {
+		code_editor->set_edit_state(pending_state);
+		pending_state = Variant();
+	}
 
 	if (p_shortcut_context) {
 		for (int i = 0; i < edit_hb->get_child_count(); ++i) {
@@ -404,83 +418,107 @@ bool ScriptTextEditor::_is_valid_color_info(const Dictionary &p_info) {
 	return true;
 }
 
-Array ScriptTextEditor::_inline_object_parse(const String &p_text, int p_line) {
+Array ScriptTextEditor::_inline_object_parse(const String &p_text) {
 	Array result;
 	int i_end_previous = 0;
 	int i_start = p_text.find("Color");
 
 	while (i_start != -1) {
 		// Ignore words that just have "Color" in them.
-		if (i_start == 0 || !("_" + p_text.substr(i_start - 1, 1)).is_valid_ascii_identifier()) {
-			int i_par_start = p_text.find_char('(', i_start + 5);
-			if (i_par_start != -1) {
-				int i_par_end = p_text.find_char(')', i_start + 5);
-				if (i_par_end != -1) {
-					Dictionary color_info;
-					color_info["line"] = p_line;
-					color_info["column"] = i_start;
-					color_info["width_ratio"] = 1.0;
-					color_info["color_end"] = i_par_end;
+		if (i_start != 0 && ('_' + p_text.substr(i_start - 1, 1)).is_valid_ascii_identifier()) {
+			i_end_previous = MAX(i_end_previous, i_start);
+			i_start = p_text.find("Color", i_start + 1);
+			continue;
+		}
 
-					String fn_name = p_text.substr(i_start + 5, i_par_start - i_start - 5);
-					String s_params = p_text.substr(i_par_start + 1, i_par_end - i_par_start - 1);
-					bool has_added_color = false;
+		const int i_par_start = p_text.find_char('(', i_start + 5);
+		const int i_par_end = p_text.find_char(')', i_start + 5);
+		if (i_par_start == -1 || i_par_end == -1) {
+			i_end_previous = MAX(i_end_previous, i_start);
+			i_start = p_text.find("Color", i_start + 1);
+			continue;
+		}
 
-					if (fn_name.is_empty()) {
-						String stripped = s_params.strip_edges(true, true);
-						// String constructor.
-						if (stripped.length() > 0 && (stripped[0] == '\"')) {
-							String color_string = stripped.substr(1, stripped.length() - 2);
-							color_info["color"] = Color(color_string);
-							color_info["color_mode"] = MODE_STRING;
-							has_added_color = true;
-						}
-						// Hex constructor.
-						else if (stripped.length() == 10 && stripped.substr(0, 2) == "0x") {
-							color_info["color"] = Color(stripped.substr(2, stripped.length() - 2));
-							color_info["color_mode"] = MODE_HEX;
-							has_added_color = true;
-						}
-						// Empty Color() constructor.
-						else if (stripped.is_empty()) {
-							color_info["color"] = Color();
-							color_info["color_mode"] = MODE_RGB;
-							has_added_color = true;
-						}
-					}
-					// Float & int parameters.
-					if (!has_added_color && s_params.size() > 0) {
-						PackedFloat64Array params = s_params.split_floats(",", false);
-						if (params.size() == 3) {
-							params.resize(4);
-							params.set(3, 1.0);
-						}
-						if (params.size() == 4) {
-							has_added_color = true;
-							if (fn_name == ".from_ok_hsl") {
-								color_info["color"] = Color::from_ok_hsl(params[0], params[1], params[2], params[3]);
-								color_info["color_mode"] = MODE_OKHSL;
-							} else if (fn_name == ".from_hsv") {
-								color_info["color"] = Color::from_hsv(params[0], params[1], params[2], params[3]);
-								color_info["color_mode"] = MODE_HSV;
-							} else if (fn_name == ".from_rgba8") {
-								color_info["color"] = Color::from_rgba8(int(params[0]), int(params[1]), int(params[2]), int(params[3]));
-								color_info["color_mode"] = MODE_RGB8;
-							} else if (fn_name.is_empty()) {
-								color_info["color"] = Color(params[0], params[1], params[2], params[3]);
-								color_info["color_mode"] = MODE_RGB;
-							} else {
-								has_added_color = false;
-							}
-						}
-					}
+		Dictionary color_info;
+		color_info["column"] = i_start;
+		color_info["width_ratio"] = 1.0;
+		color_info["color_end"] = i_par_end;
 
-					if (has_added_color) {
-						result.push_back(color_info);
-						i_end_previous = i_par_end + 1;
+		const String fn_name = p_text.substr(i_start + 5, i_par_start - i_start - 5);
+		const String s_params = p_text.substr(i_par_start + 1, i_par_end - i_par_start - 1);
+		bool has_added_color = false;
+
+		if (fn_name.is_empty()) {
+			String stripped = s_params.strip_edges(true, true);
+			if (stripped.length() > 1 && (stripped[0] == '"' || stripped[0] == '\'')) {
+				// String constructor.
+				const char32_t string_delimiter = stripped[0];
+				if (stripped[stripped.length() - 1] == string_delimiter) {
+					const String color_string = stripped.substr(1, stripped.length() - 2);
+					if (!color_string.contains_char(string_delimiter)) {
+						color_info["color"] = Color::from_string(color_string, Color());
+						color_info["color_mode"] = MODE_STRING;
+						has_added_color = true;
 					}
 				}
+			} else if (stripped.length() == 10 && stripped.begins_with("0x")) {
+				// Hex constructor.
+				const String color_string = stripped.substr(2);
+				if (color_string.is_valid_hex_number(false)) {
+					color_info["color"] = Color::from_string(color_string, Color());
+					color_info["color_mode"] = MODE_HEX;
+					has_added_color = true;
+				}
+			} else if (stripped.is_empty()) {
+				// Empty Color() constructor.
+				color_info["color"] = Color();
+				color_info["color_mode"] = MODE_RGB;
+				has_added_color = true;
 			}
+		}
+		// Float & int parameters.
+		if (!has_added_color && s_params.size() > 0) {
+			const PackedStringArray s_params_split = s_params.split(",", false, 4);
+			PackedFloat64Array params;
+			bool valid_floats = true;
+			for (const String &s_param : s_params_split) {
+				// Only allow float literals, expressions won't be evaluated and could get replaced.
+				if (!s_param.strip_edges().is_valid_float()) {
+					valid_floats = false;
+					break;
+				}
+				params.push_back(s_param.to_float());
+			}
+			if (valid_floats && params.size() == 3) {
+				if (fn_name == ".from_rgba8") {
+					params.push_back(255);
+				} else {
+					params.push_back(1.0);
+				}
+			}
+			if (valid_floats && params.size() == 4) {
+				has_added_color = true;
+				if (fn_name == ".from_ok_hsl") {
+					color_info["color"] = Color::from_ok_hsl(params[0], params[1], params[2], params[3]);
+					color_info["color_mode"] = MODE_OKHSL;
+				} else if (fn_name == ".from_hsv") {
+					color_info["color"] = Color::from_hsv(params[0], params[1], params[2], params[3]);
+					color_info["color_mode"] = MODE_HSV;
+				} else if (fn_name == ".from_rgba8") {
+					color_info["color"] = Color::from_rgba8(int(params[0]), int(params[1]), int(params[2]), int(params[3]));
+					color_info["color_mode"] = MODE_RGB8;
+				} else if (fn_name.is_empty()) {
+					color_info["color"] = Color(params[0], params[1], params[2], params[3]);
+					color_info["color_mode"] = MODE_RGB;
+				} else {
+					has_added_color = false;
+				}
+			}
+		}
+
+		if (has_added_color) {
+			result.push_back(color_info);
+			i_end_previous = i_par_end + 1;
 		}
 		i_end_previous = MAX(i_end_previous, i_start);
 		i_start = p_text.find("Color", i_start + 1);
@@ -494,9 +532,10 @@ void ScriptTextEditor::_inline_object_draw(const Dictionary &p_info, const Rect2
 		if (color_alpha_texture.is_null()) {
 			color_alpha_texture = inline_color_picker->get_theme_icon("sample_bg", "ColorPicker");
 		}
-		code_editor->get_text_editor()->draw_texture_rect(color_alpha_texture, col_rect, false);
-		code_editor->get_text_editor()->draw_rect(col_rect, Color(p_info["color"]));
-		code_editor->get_text_editor()->draw_rect(col_rect, Color(1, 1, 1), false, 1);
+		RID text_ci = code_editor->get_text_editor()->get_text_canvas_item();
+		RS::get_singleton()->canvas_item_add_rect(text_ci, p_rect.grow(-3), Color(1, 1, 1));
+		color_alpha_texture->draw_rect(text_ci, col_rect);
+		RS::get_singleton()->canvas_item_add_rect(text_ci, col_rect, Color(p_info["color"]));
 	}
 }
 
@@ -674,11 +713,19 @@ bool ScriptTextEditor::is_unsaved() {
 }
 
 Variant ScriptTextEditor::get_edit_state() {
+	if (pending_state != Variant()) {
+		return pending_state;
+	}
 	return code_editor->get_edit_state();
 }
 
 void ScriptTextEditor::set_edit_state(const Variant &p_state) {
-	code_editor->set_edit_state(p_state);
+	if (editor_enabled) {
+		code_editor->set_edit_state(p_state);
+	} else {
+		// The editor is not fully initialized, so the state can't be loaded properly.
+		pending_state = p_state;
+	}
 
 	Dictionary state = p_state;
 	if (state.has("syntax_highlighter")) {
@@ -845,6 +892,10 @@ void ScriptTextEditor::_validate_script() {
 	_update_warnings();
 	_update_errors();
 	_update_background_color();
+
+	if (!pending_dragged_exports.is_empty()) {
+		_assign_dragged_export_variables();
+	}
 
 	emit_signal(SNAME("name_changed"));
 	emit_signal(SNAME("edited_script_changed"));
@@ -1191,7 +1242,9 @@ void ScriptTextEditor::_breakpoint_item_pressed(int p_idx) {
 }
 
 void ScriptTextEditor::_breakpoint_toggled(int p_row) {
-	EditorDebuggerNode::get_singleton()->set_breakpoint(script->get_path(), p_row + 1, code_editor->get_text_editor()->is_line_breakpointed(p_row));
+	const CodeEdit *ce = code_editor->get_text_editor();
+	bool enabled = p_row < ce->get_line_count() && ce->is_line_breakpointed(p_row);
+	EditorDebuggerNode::get_singleton()->set_breakpoint(script->get_path(), p_row + 1, enabled);
 }
 
 void ScriptTextEditor::_on_caret_moved() {
@@ -1221,7 +1274,11 @@ void ScriptTextEditor::_lookup_symbol(const String &p_symbol, int p_row, int p_c
 	if (ScriptServer::is_global_class(p_symbol)) {
 		EditorNode::get_singleton()->load_resource(ScriptServer::get_global_class_path(p_symbol));
 	} else if (p_symbol.is_resource_file() || p_symbol.begins_with("uid://")) {
-		EditorNode::get_singleton()->load_scene_or_resource(p_symbol);
+		if (DirAccess::dir_exists_absolute(p_symbol)) {
+			FileSystemDock::get_singleton()->navigate_to_path(p_symbol);
+		} else {
+			EditorNode::get_singleton()->load_scene_or_resource(p_symbol);
+		}
 	} else if (lc_error == OK) {
 		_goto_line(p_row);
 
@@ -1691,27 +1748,27 @@ void ScriptTextEditor::_edit_option(int p_op) {
 	switch (p_op) {
 		case EDIT_UNDO: {
 			tx->undo();
-			callable_mp((Control *)tx, &Control::grab_focus).call_deferred();
+			callable_mp((Control *)tx, &Control::grab_focus).call_deferred(false);
 		} break;
 		case EDIT_REDO: {
 			tx->redo();
-			callable_mp((Control *)tx, &Control::grab_focus).call_deferred();
+			callable_mp((Control *)tx, &Control::grab_focus).call_deferred(false);
 		} break;
 		case EDIT_CUT: {
 			tx->cut();
-			callable_mp((Control *)tx, &Control::grab_focus).call_deferred();
+			callable_mp((Control *)tx, &Control::grab_focus).call_deferred(false);
 		} break;
 		case EDIT_COPY: {
 			tx->copy();
-			callable_mp((Control *)tx, &Control::grab_focus).call_deferred();
+			callable_mp((Control *)tx, &Control::grab_focus).call_deferred(false);
 		} break;
 		case EDIT_PASTE: {
 			tx->paste();
-			callable_mp((Control *)tx, &Control::grab_focus).call_deferred();
+			callable_mp((Control *)tx, &Control::grab_focus).call_deferred(false);
 		} break;
 		case EDIT_SELECT_ALL: {
 			tx->select_all();
-			callable_mp((Control *)tx, &Control::grab_focus).call_deferred();
+			callable_mp((Control *)tx, &Control::grab_focus).call_deferred(false);
 		} break;
 		case EDIT_MOVE_LINE_UP: {
 			code_editor->get_text_editor()->move_lines_up();
@@ -2172,7 +2229,7 @@ static String _quote_drop_data(const String &str) {
 	return escaped.quote(using_single_quotes ? "'" : "\"");
 }
 
-static String _get_dropped_resource_line(const Ref<Resource> &p_resource, bool p_create_field, bool p_allow_uid) {
+static String _get_dropped_resource_as_member(const Ref<Resource> &p_resource, bool p_create_field, bool p_allow_uid) {
 	String path = p_resource->get_path();
 	if (p_allow_uid) {
 		ResourceUID::ID id = ResourceLoader::get_resource_uid(path);
@@ -2199,6 +2256,30 @@ static String _get_dropped_resource_line(const Ref<Resource> &p_resource, bool p
 	return vformat("const %s = preload(%s)", variable_name, _quote_drop_data(path));
 }
 
+String ScriptTextEditor::_get_dropped_resource_as_exported_member(const Ref<Resource> &p_resource, const Vector<ObjectID> &p_script_instance_obj_ids) {
+	String variable_name = p_resource->get_name();
+	if (variable_name.is_empty()) {
+		variable_name = p_resource->get_path().get_file().get_basename();
+	}
+
+	variable_name = variable_name.to_snake_case().validate_unicode_identifier();
+	for (ObjectID obj_id : p_script_instance_obj_ids) {
+		pending_dragged_exports.push_back(DraggedExport{ obj_id, variable_name, p_resource });
+	}
+
+	StringName class_name = p_resource->get_class();
+	Ref<Script> resource_script = p_resource->get_script();
+
+	if (resource_script.is_valid()) {
+		StringName global_resource_script_name = resource_script->get_global_name();
+		if (!global_resource_script_name.is_empty()) {
+			class_name = global_resource_script_name;
+		}
+	}
+
+	return vformat("@export var %s: %s", variable_name, class_name);
+}
+
 void ScriptTextEditor::drop_data_fw(const Point2 &p_point, const Variant &p_data, Control *p_from) {
 	Dictionary d = p_data;
 
@@ -2208,20 +2289,28 @@ void ScriptTextEditor::drop_data_fw(const Point2 &p_point, const Variant &p_data
 	int drop_at_column = pos.x;
 	int selection_index = te->get_selection_at_line_column(drop_at_line, drop_at_column);
 
-	bool line_will_be_empty = false;
+	bool is_empty_line = false;
 	if (selection_index >= 0) {
 		// Dropped on a selection, it will be replaced.
 		drop_at_line = te->get_selection_from_line(selection_index);
 		drop_at_column = te->get_selection_from_column(selection_index);
-		line_will_be_empty = drop_at_column <= te->get_first_non_whitespace_column(drop_at_line) && te->get_selection_to_column(selection_index) == te->get_line(te->get_selection_to_line(selection_index)).length();
+		is_empty_line = drop_at_column <= te->get_first_non_whitespace_column(drop_at_line) && te->get_selection_to_column(selection_index) == te->get_line(te->get_selection_to_line(selection_index)).length();
+	}
+
+	Node *scene_root = get_tree()->get_edited_scene_root();
+
+	const bool member_drop_modifier_pressed = Input::get_singleton()->is_key_pressed(Key::CMD_OR_CTRL);
+	const bool export_drop_modifier_pressed = Input::get_singleton()->is_key_pressed(Key::ALT);
+
+	const bool allow_uid = Input::get_singleton()->is_key_pressed(Key::SHIFT) != bool(EDITOR_GET("text_editor/behavior/files/drop_preload_resources_as_uid"));
+	const String &line = te->get_line(drop_at_line);
+
+	if (selection_index < 0) {
+		is_empty_line = line.is_empty() || te->get_first_non_whitespace_column(drop_at_line) == line.length();
 	}
 
 	String text_to_drop;
-
-	const bool drop_modifier_pressed = Input::get_singleton()->is_key_pressed(Key::CMD_OR_CTRL);
-	const bool allow_uid = Input::get_singleton()->is_key_pressed(Key::SHIFT) != bool(EDITOR_GET("text_editor/behavior/files/drop_preload_resources_as_uid"));
-	const String &line = te->get_line(drop_at_line);
-	const bool is_empty_line = line_will_be_empty || line.is_empty() || te->get_first_non_whitespace_column(drop_at_line) == line.length();
+	bool add_new_line = false;
 
 	const String type = d.get("type", "");
 	if (type == "resource") {
@@ -2237,15 +2326,23 @@ void ScriptTextEditor::drop_data_fw(const Point2 &p_point, const Variant &p_data
 			return;
 		}
 
-		if (drop_modifier_pressed) {
+		if (member_drop_modifier_pressed) {
 			if (resource->is_built_in()) {
 				String warning = TTR("Preloading internal resources is not supported.");
 				EditorToaster::get_singleton()->popup_str(warning, EditorToaster::SEVERITY_ERROR);
 			} else {
-				text_to_drop = _get_dropped_resource_line(resource, is_empty_line, allow_uid);
+				text_to_drop = _get_dropped_resource_as_member(resource, is_empty_line, allow_uid);
 			}
+		} else if (export_drop_modifier_pressed) {
+			Vector<ObjectID> obj_ids = _get_objects_for_export_assignment();
+			text_to_drop = _get_dropped_resource_as_exported_member(resource, obj_ids);
+
 		} else {
 			text_to_drop = _quote_drop_data(path);
+		}
+
+		if (is_empty_line) {
+			text_to_drop += "\n";
 		}
 	}
 
@@ -2254,23 +2351,42 @@ void ScriptTextEditor::drop_data_fw(const Point2 &p_point, const Variant &p_data
 		PackedStringArray parts;
 
 		for (const String &path : files) {
-			if (drop_modifier_pressed && ResourceLoader::exists(path)) {
+			if ((member_drop_modifier_pressed || export_drop_modifier_pressed) && ResourceLoader::exists(path)) {
 				Ref<Resource> resource = ResourceLoader::load(path);
 				if (resource.is_null()) {
 					// Resource exists, but failed to load. We need only path and name, so we can use a dummy Resource instead.
 					resource.instantiate();
 					resource->set_path_cache(path);
 				}
-				parts.append(_get_dropped_resource_line(resource, is_empty_line, allow_uid));
+
+				if (member_drop_modifier_pressed) {
+					parts.append(_get_dropped_resource_as_member(resource, is_empty_line, allow_uid));
+				} else if (export_drop_modifier_pressed) {
+					Vector<ObjectID> obj_ids = _get_objects_for_export_assignment();
+					parts.append(_get_dropped_resource_as_exported_member(resource, obj_ids));
+				}
 			} else {
 				parts.append(_quote_drop_data(path));
 			}
 		}
-		text_to_drop = String(is_empty_line ? "\n" : ", ").join(parts);
+		String join_string;
+		if (is_empty_line) {
+			int indent_level = te->get_indent_level(drop_at_line);
+			if (te->is_indent_using_spaces()) {
+				join_string = "\n" + String(" ").repeat(indent_level);
+			} else {
+				join_string = "\n" + String("\t").repeat(indent_level / te->get_tab_size());
+			}
+		} else {
+			join_string = ", ";
+		}
+		text_to_drop = join_string.join(parts);
+		if (is_empty_line) {
+			text_to_drop += join_string;
+		}
 	}
 
 	if (type == "nodes") {
-		Node *scene_root = get_tree()->get_edited_scene_root();
 		if (!scene_root) {
 			EditorNode::get_singleton()->show_warning(TTR("Can't drop nodes without an open scene."));
 			return;
@@ -2288,8 +2404,9 @@ void ScriptTextEditor::drop_data_fw(const Point2 &p_point, const Variant &p_data
 
 		Array nodes = d["nodes"];
 
-		if (drop_modifier_pressed) {
+		if (member_drop_modifier_pressed) {
 			const bool use_type = EDITOR_GET("text_editor/completion/add_type_hints");
+			add_new_line = !is_empty_line && drop_at_column != 0;
 
 			for (int i = 0; i < nodes.size(); i++) {
 				NodePath np = nodes[i];
@@ -2313,13 +2430,45 @@ void ScriptTextEditor::drop_data_fw(const Point2 &p_point, const Variant &p_data
 					Ref<Script> node_script = node->get_script();
 					if (node_script.is_valid()) {
 						StringName global_node_script_name = node_script->get_global_name();
-						if (global_node_script_name != StringName()) {
+						if (!global_node_script_name.is_empty()) {
 							class_name = global_node_script_name;
 						}
 					}
-					text_to_drop += vformat("@onready var %s: %s = %c%s\n", variable_name, class_name, is_unique ? '%' : '$', path);
+					text_to_drop += vformat("@onready var %s: %s = %c%s", variable_name, class_name, is_unique ? '%' : '$', path);
 				} else {
-					text_to_drop += vformat("@onready var %s = %c%s\n", variable_name, is_unique ? '%' : '$', path);
+					text_to_drop += vformat("@onready var %s = %c%s", variable_name, is_unique ? '%' : '$', path);
+				}
+				if (i < nodes.size() - 1) {
+					text_to_drop += "\n";
+				}
+			}
+
+			if (is_empty_line || drop_at_column == 0) {
+				text_to_drop += "\n";
+			}
+		} else if (export_drop_modifier_pressed) {
+			Vector<ObjectID> obj_ids = _get_objects_for_export_assignment();
+
+			for (int i = 0; i < nodes.size(); i++) {
+				NodePath np = nodes[i];
+				Node *node = get_node(np);
+				if (!node) {
+					continue;
+				}
+
+				String variable_name = String(node->get_name()).to_snake_case().validate_unicode_identifier();
+				StringName class_name = node->get_class_name();
+				Ref<Script> node_script = node->get_script();
+				if (node_script.is_valid()) {
+					StringName global_node_script_name = node_script->get_global_name();
+					if (!global_node_script_name.is_empty()) {
+						class_name = global_node_script_name;
+					}
+				}
+
+				text_to_drop += vformat("@export var %s: %s\n", variable_name, class_name);
+				for (ObjectID obj_id : obj_ids) {
+					pending_dragged_exports.push_back(DraggedExport{ obj_id, variable_name, node });
 				}
 			}
 		} else {
@@ -2368,10 +2517,89 @@ void ScriptTextEditor::drop_data_fw(const Point2 &p_point, const Variant &p_data
 	te->remove_secondary_carets();
 	te->deselect();
 	te->set_caret_line(drop_at_line);
-	te->set_caret_column(drop_at_column);
+	if (add_new_line) {
+		te->set_caret_column(te->get_line(drop_at_line).length());
+		text_to_drop = "\n" + text_to_drop;
+	} else {
+		te->set_caret_column(drop_at_column);
+	}
 	te->insert_text_at_caret(text_to_drop);
 	te->end_complex_operation();
 	te->grab_focus();
+}
+
+Vector<ObjectID> ScriptTextEditor::_get_objects_for_export_assignment() const {
+	Vector<ObjectID> objects;
+	Node *scene_root = get_tree()->get_edited_scene_root();
+	bool assign_export_variables = scene_root && ClassDB::is_parent_class(script->get_instance_base_type(), "Node");
+
+	if (!assign_export_variables) {
+		return objects;
+	}
+
+	EditorInspector *inspector = EditorInterface::get_singleton()->get_inspector();
+	if (inspector) {
+		Object *edited_object = inspector->get_edited_object();
+		Node *node_edit = Object::cast_to<Node>(edited_object);
+		MultiNodeEdit *multi_node_edit = Object::cast_to<MultiNodeEdit>(edited_object);
+
+		if (node_edit != nullptr) {
+			if (node_edit->get_script() == script) {
+				objects.push_back(node_edit->get_instance_id());
+			}
+		} else if (multi_node_edit != nullptr) {
+			Node *es = EditorNode::get_singleton()->get_edited_scene();
+			for (int i = 0; i < multi_node_edit->get_node_count(); i++) {
+				NodePath np = multi_node_edit->get_node(i);
+				Node *node = es->get_node(np);
+				if (node->get_script() == script) {
+					objects.push_back(node->get_instance_id());
+				}
+			}
+		}
+	}
+
+	// In case there is no current editor selection/editor selection does not contain this script,
+	// it often still makes sense to try to assign the export variable,
+	// so we default to the first node with the script we find in the scene.
+	if (objects.is_empty()) {
+		Node *sn = _find_script_node(scene_root, script);
+		if (sn) {
+			objects.push_back(sn->get_instance_id());
+		}
+	}
+
+	return objects;
+}
+
+void ScriptTextEditor::_assign_dragged_export_variables() {
+	ERR_FAIL_COND(pending_dragged_exports.is_empty());
+
+	bool export_variable_set = false;
+	for (const DraggedExport &dragged_export : pending_dragged_exports) {
+		Object *obj = ObjectDB::get_instance(dragged_export.obj_id);
+		if (!obj) {
+			WARN_PRINT("Object not found, can't assign export variable.");
+			continue;
+		}
+
+		ScriptInstance *si = obj->get_script_instance();
+		if (!si) {
+			WARN_PRINT("Script on " + obj->to_string() + " does not exist anymore, can't assign export variable.");
+			continue;
+		}
+
+		bool success = si->set(dragged_export.variable_name, dragged_export.value);
+		if (success) {
+			export_variable_set = true;
+		}
+	}
+
+	if (export_variable_set) {
+		EditorInterface::get_singleton()->mark_scene_as_unsaved();
+	}
+
+	pending_dragged_exports.clear();
 }
 
 void ScriptTextEditor::_text_edit_gui_input(const Ref<InputEvent> &ev) {
@@ -2439,7 +2667,6 @@ void ScriptTextEditor::_text_edit_gui_input(const Ref<InputEvent> &ev) {
 		if (has_color) {
 			String line = tx->get_line(mouse_line);
 			color_position.x = mouse_line;
-			color_position.y = mouse_column;
 
 			int begin = -1;
 			int end = -1;
@@ -2507,6 +2734,8 @@ void ScriptTextEditor::_text_edit_gui_input(const Ref<InputEvent> &ev) {
 			}
 			if (has_color) {
 				color_panel->set_position(get_screen_position() + local_pos);
+				color_position.y = begin;
+				color_position.z = end;
 			}
 		}
 		_make_context_menu(tx->has_selection(), has_color, foldable, open_docs, goto_definition, local_pos);
@@ -2523,7 +2752,7 @@ void ScriptTextEditor::_color_changed(const Color &p_color) {
 	}
 
 	String line = code_editor->get_text_editor()->get_line(color_position.x);
-	String line_with_replaced_args = line.replace(color_args, new_args);
+	String line_with_replaced_args = line.substr(0, color_position.y) + line.substr(color_position.y, color_position.z - color_position.y).replace(color_args, new_args) + line.substr(color_position.z);
 
 	color_args = new_args;
 	code_editor->get_text_editor()->begin_complex_operation();
@@ -2619,17 +2848,9 @@ void ScriptTextEditor::_enable_code_editor() {
 	_update_gutter_indexes();
 
 	editor_box->add_child(warnings_panel);
-	warnings_panel->add_theme_font_override(
-			"normal_font", EditorNode::get_singleton()->get_editor_theme()->get_font(SNAME("main"), EditorStringName(EditorFonts)));
-	warnings_panel->add_theme_font_size_override(
-			"normal_font_size", EditorNode::get_singleton()->get_editor_theme()->get_font_size(SNAME("main_size"), EditorStringName(EditorFonts)));
 	warnings_panel->connect("meta_clicked", callable_mp(this, &ScriptTextEditor::_warning_clicked));
 
 	editor_box->add_child(errors_panel);
-	errors_panel->add_theme_font_override(
-			"normal_font", EditorNode::get_singleton()->get_editor_theme()->get_font(SNAME("main"), EditorStringName(EditorFonts)));
-	errors_panel->add_theme_font_size_override(
-			"normal_font_size", EditorNode::get_singleton()->get_editor_theme()->get_font_size(SNAME("main_size"), EditorStringName(EditorFonts)));
 	errors_panel->connect("meta_clicked", callable_mp(this, &ScriptTextEditor::_error_clicked));
 
 	add_child(context_menu);
@@ -2799,6 +3020,8 @@ ScriptTextEditor::ScriptTextEditor() {
 	edit_hb = memnew(HBoxContainer);
 
 	edit_menu = memnew(MenuButton);
+	edit_menu->set_flat(false);
+	edit_menu->set_theme_type_variation("FlatMenuButton");
 	edit_menu->set_text(TTRC("Edit"));
 	edit_menu->set_switch_on_hover(true);
 	edit_menu->set_shortcut_context(this);
@@ -2815,11 +3038,15 @@ ScriptTextEditor::ScriptTextEditor() {
 	set_syntax_highlighter(highlighter);
 
 	search_menu = memnew(MenuButton);
+	search_menu->set_flat(false);
+	search_menu->set_theme_type_variation("FlatMenuButton");
 	search_menu->set_text(TTRC("Search"));
 	search_menu->set_switch_on_hover(true);
 	search_menu->set_shortcut_context(this);
 
 	goto_menu = memnew(MenuButton);
+	goto_menu->set_flat(false);
+	goto_menu->set_theme_type_variation("FlatMenuButton");
 	goto_menu->set_text(TTRC("Go To"));
 	goto_menu->set_switch_on_hover(true);
 	goto_menu->set_shortcut_context(this);
@@ -2931,7 +3158,8 @@ void ScriptTextEditor::register_editor() {
 	ED_SHORTCUT("script_text_editor/goto_function", TTRC("Go to Function..."), KeyModifierMask::ALT | KeyModifierMask::CTRL | Key::F);
 	ED_SHORTCUT_OVERRIDE("script_text_editor/goto_function", "macos", KeyModifierMask::CTRL | KeyModifierMask::META | Key::J);
 
-	ED_SHORTCUT("script_text_editor/goto_line", TTRC("Go to Line..."), KeyModifierMask::CMD_OR_CTRL | Key::L);
+	ED_SHORTCUT("script_text_editor/goto_line", TTRC("Go to Line..."), KeyModifierMask::CMD_OR_CTRL | Key::G);
+	ED_SHORTCUT_OVERRIDE("script_text_editor/goto_line", "macos", KeyModifierMask::CMD_OR_CTRL | Key::L);
 	ED_SHORTCUT("script_text_editor/goto_symbol", TTRC("Lookup Symbol"));
 
 	ED_SHORTCUT("script_text_editor/toggle_breakpoint", TTRC("Toggle Breakpoint"), Key::F9);
