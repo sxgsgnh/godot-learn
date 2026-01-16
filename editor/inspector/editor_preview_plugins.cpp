@@ -192,7 +192,7 @@ Ref<Texture2D> EditorImagePreviewPlugin::generate(const Ref<Resource> &p_from, c
 	Ref<Image> img = p_from;
 
 	if (img.is_null() || img->is_empty()) {
-		return Ref<Image>();
+		return Ref<Texture2D>();
 	}
 
 	img = img->duplicate();
@@ -200,7 +200,7 @@ Ref<Texture2D> EditorImagePreviewPlugin::generate(const Ref<Resource> &p_from, c
 
 	if (img->is_compressed()) {
 		if (img->decompress() != OK) {
-			return Ref<Image>();
+			return Ref<Texture2D>();
 		}
 	} else if (img->get_format() != Image::FORMAT_RGB8 && img->get_format() != Image::FORMAT_RGBA8) {
 		img->convert(Image::FORMAT_RGBA8);
@@ -231,6 +231,9 @@ bool EditorBitmapPreviewPlugin::handles(const String &p_type) const {
 
 Ref<Texture2D> EditorBitmapPreviewPlugin::generate(const Ref<Resource> &p_from, const Size2 &p_size, Dictionary &p_metadata) const {
 	Ref<BitMap> bm = p_from;
+	if (bm.is_null()) {
+		return Ref<Texture2D>();
+	}
 
 	if (bm->get_size() == Size2()) {
 		return Ref<Texture2D>();

@@ -43,6 +43,7 @@ void TextServerExtension::_bind_methods() {
 	GDVIRTUAL_BIND(_get_support_data_info);
 	GDVIRTUAL_BIND(_save_support_data, "filename");
 	GDVIRTUAL_BIND(_get_support_data);
+	GDVIRTUAL_BIND(_is_locale_using_support_data, "locale");
 
 	GDVIRTUAL_BIND(_is_locale_right_to_left, "locale");
 
@@ -365,9 +366,11 @@ void TextServerExtension::_bind_methods() {
 	GDVIRTUAL_BIND(_shaped_text_prev_character_pos, "shaped", "pos");
 	GDVIRTUAL_BIND(_shaped_text_closest_character_pos, "shaped", "pos");
 
+#ifndef DISABLE_DEPRECATED
 	GDVIRTUAL_BIND(_format_number, "number", "language");
 	GDVIRTUAL_BIND(_parse_number, "number", "language");
 	GDVIRTUAL_BIND(_percent_sign, "language");
+#endif
 
 	GDVIRTUAL_BIND(_strip_diacritics, "string");
 	GDVIRTUAL_BIND(_is_valid_identifier, "string");
@@ -443,6 +446,12 @@ bool TextServerExtension::save_support_data(const String &p_filename) const {
 PackedByteArray TextServerExtension::get_support_data() const {
 	PackedByteArray ret;
 	GDVIRTUAL_CALL(_get_support_data, ret);
+	return ret;
+}
+
+bool TextServerExtension::is_locale_using_support_data(const String &p_locale) const {
+	bool ret = false;
+	GDVIRTUAL_CALL(_is_locale_using_support_data, p_locale, ret);
 	return ret;
 }
 
@@ -1652,12 +1661,13 @@ int64_t TextServerExtension::shaped_text_closest_character_pos(const RID &p_shap
 	return TextServer::shaped_text_closest_character_pos(p_shaped, p_pos);
 }
 
+#ifndef DISABLE_DEPRECATED
 String TextServerExtension::format_number(const String &p_string, const String &p_language) const {
 	String ret;
 	if (GDVIRTUAL_CALL(_format_number, p_string, p_language, ret)) {
 		return ret;
 	}
-	return p_string;
+	return TextServer::format_number(p_string, p_language);
 }
 
 String TextServerExtension::parse_number(const String &p_string, const String &p_language) const {
@@ -1665,14 +1675,17 @@ String TextServerExtension::parse_number(const String &p_string, const String &p
 	if (GDVIRTUAL_CALL(_parse_number, p_string, p_language, ret)) {
 		return ret;
 	}
-	return p_string;
+	return TextServer::parse_number(p_string, p_language);
 }
 
 String TextServerExtension::percent_sign(const String &p_language) const {
 	String ret = "%";
-	GDVIRTUAL_CALL(_percent_sign, p_language, ret);
-	return ret;
+	if (GDVIRTUAL_CALL(_percent_sign, p_language, ret)) {
+		return ret;
+	}
+	return TextServer::percent_sign(p_language);
 }
+#endif // DISABLE_DEPRECATED
 
 bool TextServerExtension::is_valid_identifier(const String &p_string) const {
 	bool ret;

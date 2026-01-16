@@ -67,6 +67,8 @@ public:
 	GDVIRTUAL0RC(String, _get_support_data_info);
 	GDVIRTUAL1RC(bool, _save_support_data, const String &);
 	GDVIRTUAL0RC(PackedByteArray, _get_support_data);
+	virtual bool is_locale_using_support_data(const String &p_locale) const override;
+	GDVIRTUAL1RC(bool, _is_locale_using_support_data, const String &);
 
 	virtual bool is_locale_right_to_left(const String &p_locale) const override;
 	GDVIRTUAL1RC(bool, _is_locale_right_to_left, const String &);
@@ -607,12 +609,14 @@ public:
 	GDVIRTUAL2RC(int64_t, _shaped_text_prev_character_pos, RID, int64_t);
 	GDVIRTUAL2RC(int64_t, _shaped_text_closest_character_pos, RID, int64_t);
 
+#ifndef DISABLE_DEPRECATED
 	virtual String format_number(const String &p_string, const String &p_language = "") const override;
 	virtual String parse_number(const String &p_string, const String &p_language = "") const override;
 	virtual String percent_sign(const String &p_language = "") const override;
 	GDVIRTUAL2RC(String, _format_number, const String &, const String &);
 	GDVIRTUAL2RC(String, _parse_number, const String &, const String &);
 	GDVIRTUAL1RC(String, _percent_sign, const String &);
+#endif // DISABLE_DEPRECATED
 
 	virtual String strip_diacritics(const String &p_string) const override;
 	GDVIRTUAL1RC(String, _strip_diacritics, const String &);
