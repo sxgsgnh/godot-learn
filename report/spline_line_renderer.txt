@@ -1,0 +1,158 @@
+/**************************************************************************/
+/*  spline_line_renderer.h                                                 */
+/**************************************************************************/
+
+#pragma once
+
+#include "core/templates/local_vector.h"
+#include "scene/3d/node_3d.h"
+#include "scene/resources/curve.h"
+#include "servers/rendering_server.h"
+
+class SplineLineRenderer : public Node3D {
+	GDCLASS(SplineLineRenderer, Node3D);
+
+public:
+	// 样条线渲染配置
+	struct SplineConfig {
+		Ref<Curve3D> curve;           // 输入曲线
+		float line_width = 0.1f;      // 线条宽度
+		float line_width_curve = 0.0; // 宽度曲线（用于渐变）
+		Color line_color = Color::WHITE;
+		bool use_color_curve = false; // 是否使用颜色曲线
+		Ref<Texture2D> line_texture;  // 线条纹理
+		bool use_texture = false;
+		float bake_interval = 0.1f;   // 采样间隔
+		bool smooth_joins = true;     // 平滑接点
+		int segments_per_quad = 2;    // 每个四边形的段数
+	};
+
+	// Frenet Frame 数据（局部坐标系）
+	struct FrenetFrame {
+		Vector3 tangent;    // T - 切线（沿着曲线）
+		Vector3 normal;     // N - 法线（径向）
+		Vector3 binormal;   // B - 副法线（线宽方向）
+	};
+
+	// 实例数据（64 字节，GPU 优化）
+	struct SplineInstanceData {
+		// 第一行：位置和宽度
+		float position[3];
+		float width;
+
+		// 第二行：方向和颜色
+		float tangent[3];
+		uint32_t color_packed;
+
+		// 第三行：法向量和 UV
+		float normal[3];
+		float uv_offset;
+
+		// 第四行：副法向量和纹理信息
+		float binormal[3];
+		uint32_t texture_id;
+
+		SplineInstanceData() :
+				width(0.1f),
+				color_packed(0xFFFFFFFF),
+				uv_offset(0.0f),
+				texture_id(0) {
+			position[0] = position[1] = position[2] = 0.0f;
+			tangent[0] = 0.0f;
+			tangent[1] = 0.0f;
+			tangent[2] = 1.0f;
+			normal[0] = 1.0f;
+			normal[1] = 0.0f;
+			normal[2] = 0.0f;
+			binormal[0] = 0.0f;
+			binormal[1] = 1.0f;
+			binormal[2] = 0.0f;
+		}
+	};
+
+	// 采样点数据
+	struct SampledPoint {
+		Vector3 position;
+		FrenetFrame frame;
+		float parameter;     // 曲线参数 [0, 1]
+		float distance;      // 累积距离
+		float width;         // 该点的宽度
+		Color color;         // 该点的颜色
+	};
+
+private:
+	SplineConfig config;
+	LocalVector<SampledPoint> sampled_points;
+	LocalVector<SplineInstanceData> instance_data;
+
+	// GPU 资源
+	RID vertex_buffer;        // 四边形模板顶点
+	RID vertex_array;
+	RID instance_buffer;      // 实例数据
+	RID shader;               // 着色器
+	RID material;             // 材质
+	RID render_instance;      // 渲染实例
+
+	// 配置
+	uint32_t max_instance_count = 8192;
+	bool dirty = true;
+
+	// 内部方法
+	void _update_sampled_points();
+	void _compute_frenet_frames();
+	void _generate_instance_data();
+	void _create_gpu_buffers();
+	void _update_gpu_buffers();
+	void _create_shader();
+	void _on_curve_changed();
+
+	// Frenet Frame 计算
+	FrenetFrame _compute_frenet_frame(
+		const Vector3 &p_tangent,
+		const Vector3 &p_prev_binormal = Vector3::ZERO);
+
+	// 曲线采样
+	void _sample_curve(float p_interval);
+
+	// 颜色与宽度评估
+	Color _evaluate_color(float p_t) const;
+	float _evaluate_width(float p_t) const;
+
+protected:
+	void _notification(int p_what);
+	static void _bind_methods();
+
+public:
+	SplineLineRenderer();
+	~SplineLineRenderer();
+
+	// 配置 API
+	void set_curve(const Ref<Curve3D> &p_curve);
+	Ref<Curve3D> get_curve() const { return config.curve; }
+
+	void set_line_width(float p_width);
+	float get_line_width() const { return config.line_width; }
+
+	void set_line_color(const Color &p_color);
+	Color get_line_color() const { return config.line_color; }
+
+	void set_bake_interval(float p_interval);
+	float get_bake_interval() const { return config.bake_interval; }
+
+	void set_smooth_joins(bool p_enabled);
+	bool is_smooth_joins_enabled() const { return config.smooth_joins; }
+
+	void set_line_texture(const Ref<Texture2D> &p_texture);
+	Ref<Texture2D> get_line_texture() const { return config.line_texture; }
+
+	void set_use_texture(bool p_use);
+	bool is_use_texture() const { return config.use_texture; }
+
+	// 统计信息
+	uint32_t get_segment_count() const { return sampled_points.size() > 0 ? sampled_points.size() - 1 : 0; }
+	uint32_t get_instance_count() const { return instance_data.size(); }
+	float get_total_length() const;
+
+	// 更新
+	void update_spline();
+};

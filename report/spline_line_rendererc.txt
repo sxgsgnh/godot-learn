@@ -1,0 +1,372 @@
+/**************************************************************************/
+/*  spline_line_renderer.cpp                                               */
+/**************************************************************************/
+
+#include "spline_line_renderer.h"
+
+#include "core/math/geometry_3d.h"
+#include "servers/rendering_server.h"
+
+SplineLineRenderer::SplineLineRenderer() {
+	set_notify_transform(true);
+
+	// 初始化配置
+	config.line_width = 0.1f;
+	config.line_color = Color::WHITE;
+	config.bake_interval = 0.1f;
+	config.smooth_joins = true;
+
+	// 创建 GPU 资源
+	_create_gpu_buffers();
+	_create_shader();
+}
+
+SplineLineRenderer::~SplineLineRenderer() {
+	if (render_instance.is_valid()) {
+		RS::get_singleton()->free_rid(render_instance);
+	}
+	if (vertex_array.is_valid()) {
+		RS::get_singleton()->free_rid(vertex_array);
+	}
+	if (vertex_buffer.is_valid()) {
+		RS::get_singleton()->free_rid(vertex_buffer);
+	}
+	if (instance_buffer.is_valid()) {
+		RS::get_singleton()->free_rid(instance_buffer);
+	}
+	if (material.is_valid()) {
+		RS::get_singleton()->free_rid(material);
+	}
+	if (shader.is_valid()) {
+		RS::get_singleton()->free_rid(shader);
+	}
+}
+
+void SplineLineRenderer::_notification(int p_what) {
+	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE: {
+			if (config.curve.is_valid()) {
+				config.curve->connect("changed", Callable(this, "_on_curve_changed"));
+				update_spline();
+			}
+		} break;
+
+		case NOTIFICATION_EXIT_TREE: {
+			if (config.curve.is_valid()) {
+				config.curve->disconnect("changed", Callable(this, "_on_curve_changed"));
+			}
+		} break;
+
+		case NOTIFICATION_TRANSFORM_CHANGED: {
+			if (render_instance.is_valid()) {
+				RS::get_singleton()->instance_set_transform(
+					render_instance, get_global_transform());
+			}
+		} break;
+	}
+}
+
+void SplineLineRenderer::_bind_methods() {
+	ClassDB::bind_method(D_METHOD("set_curve", "curve"), &SplineLineRenderer::set_curve);
+	ClassDB::bind_method(D_METHOD("get_curve"), &SplineLineRenderer::get_curve);
+
+	ClassDB::bind_method(D_METHOD("set_line_width", "width"), &SplineLineRenderer::set_line_width);
+	ClassDB::bind_method(D_METHOD("get_line_width"), &SplineLineRenderer::get_line_width);
+
+	ClassDB::bind_method(D_METHOD("set_line_color", "color"), &SplineLineRenderer::set_line_color);
+	ClassDB::bind_method(D_METHOD("get_line_color"), &SplineLineRenderer::get_line_color);
+
+	ClassDB::bind_method(D_METHOD("set_bake_interval", "interval"), &SplineLineRenderer::set_bake_interval);
+	ClassDB::bind_method(D_METHOD("get_bake_interval"), &SplineLineRenderer::get_bake_interval);
+
+	ClassDB::bind_method(D_METHOD("set_smooth_joins", "enabled"), &SplineLineRenderer::set_smooth_joins);
+	ClassDB::bind_method(D_METHOD("is_smooth_joins_enabled"), &SplineLineRenderer::is_smooth_joins_enabled);
+
+	ClassDB::bind_method(D_METHOD("set_line_texture", "texture"), &SplineLineRenderer::set_line_texture);
+	ClassDB::bind_method(D_METHOD("get_line_texture"), &SplineLineRenderer::get_line_texture);
+
+	ClassDB::bind_method(D_METHOD("set_use_texture", "use"), &SplineLineRenderer::set_use_texture);
+	ClassDB::bind_method(D_METHOD("is_use_texture"), &SplineLineRenderer::is_use_texture);
+
+	ClassDB::bind_method(D_METHOD("update_spline"), &SplineLineRenderer::update_spline);
+	ClassDB::bind_method(D_METHOD("get_segment_count"), &SplineLineRenderer::get_segment_count);
+	ClassDB::bind_method(D_METHOD("get_instance_count"), &SplineLineRenderer::get_instance_count);
+
+	ClassDB::bind_method(D_METHOD("_on_curve_changed"), &SplineLineRenderer::_on_curve_changed);
+
+	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "curve", PROPERTY_HINT_RESOURCE_TYPE, "Curve3D"),
+			"set_curve", "get_curve");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "line_width", PROPERTY_HINT_RANGE, "0.01,10.0,0.01"),
+			"set_line_width", "get_line_width");
+	ADD_PROPERTY(PropertyInfo(Variant::COLOR, "line_color"),
+			"set_line_color", "get_line_color");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "bake_interval", PROPERTY_HINT_RANGE, "0.01,1.0,0.01"),
+			"set_bake_interval", "get_bake_interval");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "smooth_joins"),
+			"set_smooth_joins", "is_smooth_joins_enabled");
+}
+
+void SplineLineRenderer::set_curve(const Ref<Curve3D> &p_curve) {
+	if (config.curve == p_curve) {
+		return;
+	}
+
+	if (config.curve.is_valid() && is_inside_tree()) {
+		config.curve->disconnect("changed", Callable(this, "_on_curve_changed"));
+	}
+
+	config.curve = p_curve;
+
+	if (config.curve.is_valid() && is_inside_tree()) {
+		config.curve->connect("changed", Callable(this, "_on_curve_changed"));
+	}
+
+	dirty = true;
+	update_spline();
+}
+
+void SplineLineRenderer::set_line_width(float p_width) {
+	if (Math::is_equal_approx(config.line_width, p_width)) {
+		return;
+	}
+	config.line_width = MAX(0.01f, p_width);
+	dirty = true;
+}
+
+void SplineLineRenderer::set_line_color(const Color &p_color) {
+	if (config.line_color == p_color) {
+		return;
+	}
+	config.line_color = p_color;
+	_update_gpu_buffers();
+}
+
+void SplineLineRenderer::set_bake_interval(float p_interval) {
+	if (Math::is_equal_approx(config.bake_interval, p_interval)) {
+		return;
+	}
+	config.bake_interval = MAX(0.01f, p_interval);
+	dirty = true;
+}
+
+void SplineLineRenderer::set_smooth_joins(bool p_enabled) {
+	if (config.smooth_joins == p_enabled) {
+		return;
+	}
+	config.smooth_joins = p_enabled;
+	dirty = true;
+}
+
+void SplineLineRenderer::set_line_texture(const Ref<Texture2D> &p_texture) {
+	config.line_texture = p_texture;
+}
+
+void SplineLineRenderer::set_use_texture(bool p_use) {
+	if (config.use_texture == p_use) {
+		return;
+	}
+	config.use_texture = p_use;
+}
+
+void SplineLineRenderer::_on_curve_changed() {
+	dirty = true;
+	update_spline();
+}
+
+void SplineLineRenderer::update_spline() {
+	if (!config.curve.is_valid() || config.curve->get_point_count() < 2) {
+		return;
+	}
+
+	_sample_curve(config.bake_interval);
+	_compute_frenet_frames();
+	_generate_instance_data();
+	_update_gpu_buffers();
+
+	dirty = false;
+}
+
+void SplineLineRenderer::_sample_curve(float p_interval) {
+	sampled_points.clear();
+
+	const float baked_length = config.curve->get_baked_length();
+	if (baked_length <= 0.0f) {
+		return;
+	}
+
+	const int sample_count = int(baked_length / p_interval) + 1;
+
+	for (int i = 0; i < sample_count; i++) {
+		const float t = float(i) / float(sample_count - 1);
+		const float distance = t * baked_length;
+
+		SampledPoint point;
+		point.parameter = t;
+		point.distance = distance;
+
+		// 采样位置
+		point.position = config.curve->sample_baked(distance, true);
+
+		// 采样切线
+		Vector3 next_pos = config.curve->sample_baked(
+			MIN(distance + 0.01f, baked_length), true);
+		point.frame.tangent = (next_pos - point.position).normalized();
+
+		// 初始化法线（会在 Frenet 计算中更新）
+		point.frame.normal = Vector3::RIGHT;
+		point.frame.binormal = Vector3::UP;
+
+		// 评估宽度和颜色
+		point.width = _evaluate_width(t);
+		point.color = _evaluate_color(t);
+
+		sampled_points.push_back(point);
+	}
+}
+
+void SplineLineRenderer::_compute_frenet_frames() {
+	if (sampled_points.size() < 2) {
+		return;
+	}
+
+	// 第一个点：使用固定的上向量
+	Vector3 up = Vector3::UP;
+	sampled_points[0].frame.normal =
+		sampled_points[0].frame.tangent.cross(up).normalized();
+	if (sampled_points[0].frame.normal.length() < 0.1f) {
+		// 防止退化
+		sampled_points[0].frame.normal = Vector3::RIGHT;
+	}
+	sampled_points[0].frame.binormal =
+		sampled_points[0].frame.tangent.cross(sampled_points[0].frame.normal).normalized();
+
+	// 后续点：使用 Frenet-Serret 公式
+	for (uint32_t i = 1; i < sampled_points.size(); i++) {
+		sampled_points[i].frame = _compute_frenet_frame(
+			sampled_points[i].frame.tangent,
+			sampled_points[i - 1].frame.binormal);
+	}
+}
+
+SplineLineRenderer::FrenetFrame SplineLineRenderer::_compute_frenet_frame(
+	const Vector3 &p_tangent,
+	const Vector3 &p_prev_binormal) {
+
+	FrenetFrame frame;
+	frame.tangent = p_tangent.normalized();
+
+	// 保持连续性：尽量保持与前一个副法线接近
+	Vector3 prev_normal = p_prev_binormal.cross(frame.tangent).normalized();
+
+	// 计算新的法线（通过投影）
+	frame.normal = prev_normal;
+	float dot = frame.normal.dot(frame.tangent);
+	frame.normal = (frame.normal - frame.tangent * dot).normalized();
+
+	if (frame.normal.length() < 0.1f) {
+		// 退化情况：选择垂直于切线的向量
+		if (ABS(frame.tangent.y) < 0.9f) {
+			frame.normal = Vector3(0, 1, 0).cross(frame.tangent).normalized();
+		} else {
+			frame.normal = Vector3(1, 0, 0).cross(frame.tangent).normalized();
+		}
+	}
+
+	frame.binormal = frame.tangent.cross(frame.normal).normalized();
+
+	return frame;
+}
+
+Color SplineLineRenderer::_evaluate_color(float p_t) const {
+	return config.line_color;
+}
+
+float SplineLineRenderer::_evaluate_width(float p_t) const {
+	return config.line_width;
+}
+
+void SplineLineRenderer::_generate_instance_data() {
+	instance_data.clear();
+
+	if (sampled_points.size() < 2) {
+		return;
+	}
+
+	// 为每个段生成实例数据
+	for (uint32_t i = 0; i < sampled_points.size() - 1; i++) {
+		const SampledPoint &p0 = sampled_points[i];
+		const SampledPoint &p1 = sampled_points[i + 1];
+
+		SplineInstanceData inst;
+
+		// 位置（段中点）
+		Vector3 mid_pos = (p0.position + p1.position) * 0.5f;
+		inst.position[0] = mid_pos.x;
+		inst.position[1] = mid_pos.y;
+		inst.position[2] = mid_pos.z;
+
+		// 宽度（平均）
+		inst.width = (p0.width + p1.width) * 0.5f;
+
+		// 方向
+		inst.tangent[0] = p0.frame.tangent.x;
+		inst.tangent[1] = p0.frame.tangent.y;
+		inst.tangent[2] = p0.frame.tangent.z;
+
+		// 法线
+		inst.normal[0] = p0.frame.normal.x;
+		inst.normal[1] = p0.frame.normal.y;
+		inst.normal[2] = p0.frame.normal.z;
+
+		// 副法线
+		inst.binormal[0] = p0.frame.binormal.x;
+		inst.binormal[1] = p0.frame.binormal.y;
+		inst.binormal[2] = p0.frame.binormal.z;
+
+		// 颜色
+		Color color = (p0.color + p1.color) * 0.5f;
+		inst.color_packed = color.to_abgr32();
+
+		// UV 偏移
+		inst.uv_offset = p0.parameter;
+
+		instance_data.push_back(inst);
+	}
+}
+
+void SplineLineRenderer::_create_gpu_buffers() {
+	// 创建四边形模板顶点
+	LocalVector<Vector3> quad_vertices;
+	quad_vertices.push_back(Vector3(-0.5f, -0.5f, 0.0f));
+	quad_vertices.push_back(Vector3(0.5f, -0.5f, 0.0f));
+	quad_vertices.push_back(Vector3(0.5f, 0.5f, 0.0f));
+	quad_vertices.push_back(Vector3(-0.5f, 0.5f, 0.0f));
+
+	Vector<uint8_t> vertex_data;
+	vertex_data.resize(sizeof(Vector3) * 4);
+	memcpy(vertex_data.ptrw(), quad_vertices.ptr(), sizeof(Vector3) * 4);
+
+	// 注：这里使用简化的缓冲区创建，实际应使用 RenderingDevice API
+	// vertex_buffer = RS::get_singleton()->vertex_buffer_create(
+	//     sizeof(Vector3) * 4, vertex_data);
+}
+
+void SplineLineRenderer::_update_gpu_buffers() {
+	if (instance_data.is_empty()) {
+		return;
+	}
+
+	// 实现：上传实例数据到 GPU
+	// 这里是占位符，完整实现需要 RenderingDevice 支持
+}
+
+void SplineLineRenderer::_create_shader() {
+	// 占位符：实现着色器创建
+}
+
+float SplineLineRenderer::get_total_length() const {
+	if (config.curve.is_valid()) {
+		return config.curve->get_baked_length();
+	}
+	return 0.0f;
+}
