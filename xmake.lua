@@ -21,165 +21,172 @@ set_defaultmode("release")
 -- 选项定义
 -- ============================================================================
 
+
 -- 平台相关选项
-option("platform", {
-    default = "",
-    description = "Target platform",
-    values = {"windows", "linuxbsd", "macos", "android", "web"}
-})
+option("platform")
+    set_default("")
+    set_showmenu(true)
+    set_description("Target platform")
+    set_values("windows", "linuxbsd", "macos", "android", "web")
+option_end()
 
-option("arch", {
-    default = "auto",
-    description = "Target architecture",
-    values = {"x86_64", "x86_32", "arm64", "armv7"}
-})
+option("arch")
+    set_default("auto")
+    set_showmenu(true)
+    set_description("Target architecture")
+    set_values("x86_64", "x86_32", "arm64", "armv7")
+option_end()
 
--- 构建目标选项
-option("target", {
-    default = "editor",
-    description = "Build target",
-    values = {"editor", "template_debug", "template_release"}
-})
+option("target")
+    set_default("editor")
+    set_showmenu(true)
+    set_description("Build target")
+    set_values("editor", "template_debug", "template_release")
+option_end()
 
--- 优化选项
-option("optimize", {
-    default = "auto",
-    description = "Optimization level",
-    values = {"none", "speed", "speed_trace", "size", "size_extra", "debug"}
-})
+option("optimize")
+    set_default("auto")
+    set_showmenu(true)
+    set_description("Optimization level")
+    set_values("none", "speed", "speed_trace", "size", "size_extra", "debug")
+option_end()
 
-option("debug_symbols", {
-    default = "auto",
-    description = "Include debug symbols",
-    type = "boolean"
-})
+option("debug_symbols")
+    set_default("auto")
+    set_showmenu(true)
+    set_description("Include debug symbols")
+option_end()
 
--- 功能开关选项
-option("tests", {
-    default = false,
-    description = "Build unit tests",
-    type = "boolean"
-})
+option("tests")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Build unit tests")
+option_end()
 
-option("dev_mode", {
-    default = false,
-    description = "Enable development mode options",
-    type = "boolean"
-})
+option("dev_mode")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Enable development mode options")
+option_end()
 
-option("disable_3d", {
-    default = false,
-    description = "Disable 3D support",
-    type = "boolean"
-})
+option("disable_3d")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Disable 3D support")
+option_end()
 
-option("disable_physics_3d", {
-    default = false,
-    description = "Disable 3D physics",
-    type = "boolean"
-})
+option("disable_physics_3d")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Disable 3D physics")
+option_end()
 
-option("disable_physics_2d", {
-    default = false,
-    description = "Disable 2D physics",
-    type = "boolean"
-})
+option("disable_physics_2d")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Disable 2D physics")
+option_end()
 
--- 第三方库选项
-option("builtin_zlib", {
-    default = true,
-    description = "Use built-in zlib",
-    type = "boolean"
-})
+option("builtin_zlib")
+    set_default(true)
+    set_showmenu(true)
+    set_description("Use built-in zlib")
+	set_category("builtin libraries")
+option_end()
 
-option("builtin_brotli", {
-    default = true,
-    description = "Use built-in Brotli",
-    type = "boolean"
-})
+option("builtin_brotli")
+    set_default(true)
+    set_showmenu(true)
+    set_description("Use built-in Brotli")
+	set_category("builtin libraries")
+option_end()
 
-option("builtin_clipper2", {
-    default = true,
-    description = "Use built-in Clipper2",
-    type = "boolean"
-})
+option("builtin_clipper2")
+    set_default(true)
+    set_showmenu(true)
+    set_description("Use built-in Clipper2")
+	set_category("builtin libraries")
+option_end()
 
-option("builtin_zstd", {
-    default = true,
-    description = "Use built-in Zstd",
-    type = "boolean"
-})
+option("builtin_zstd")
+    set_default(true)
+    set_showmenu(true)set_category("graphics backends")
+    set_description("Use built-in Zstd")
+	set_category("builtin libraries")
+option_end()
 
-option("builtin_certs", {
-    default = true,
-    description = "Use built-in SSL certificates",
-    type = "boolean"
-})
+option("builtin_certs")
+    set_default(true)
+    set_showmenu(true)
+    set_description("Use built-in SSL certificates")
+	set_category("builtin libraries")
+option_end()
 
-option("builtin_freetype", {
-    default = true,
-    description = "Use built-in FreeType",
-    type = "boolean"
-})
+option("builtin_freetype")
+    set_default(true)
+    set_showmenu(true)
+    set_description("Use built-in FreeType")
+	set_category("builtin libraries")
+option_end()
 
--- 图形驱动选项
-option("vulkan", {
-    default = true,
-    description = "Enable Vulkan rendering driver",
-    type = "boolean"
-})
+option("vulkan")
+    set_default(true)
+    set_showmenu(true)
+    set_description("Enable Vulkan rendering driver")
+	set_category("graphics backends")
+option_end()
 
-option("opengl3", {
-    default = true,
-    description = "Enable OpenGL/GLES3 rendering driver",
-    type = "boolean"
-})
+option("opengl3")
+    set_default(true)
+    set_showmenu(true)
+    set_description("Enable OpenGL/GLES3 rendering driver")
+	set_category("graphics backends")
+option_end()
 
-option("d3d12", {
-    default = false,
-    description = "Enable Direct3D 12 rendering driver",
-    type = "boolean"
-})
+option("d3d12")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Enable Direct3D 12 rendering driver")
+	set_category("graphics backends")
+option_end()
 
-option("metal", {
-    default = false,
-    description = "Enable Metal rendering driver (macOS/iOS only)",
-    type = "boolean"
-})
+option("metal")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Enable Metal rendering driver (macOS/iOS only)")
+	set_category("graphics backends")
+option_end()
 
--- 音频驱动选项
-option("xaudio2", {
-    default = false,
-    description = "Enable XAudio2 audio driver",
-    type = "boolean"
-})
+option("xaudio2")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Enable XAudio2 audio driver")
+	set_category("audio backends")
+option_end()
 
--- 输入驱动选项
-option("sdl", {
-    default = true,
-    description = "Enable SDL3 input driver",
-    type = "boolean"
-})
+option("sdl")
+    set_default(true)
+    set_showmenu(true)
+    set_description("Enable SDL3 input driver")
+option_end()
 
--- 无障碍选项
-option("accesskit", {
-    default = true,
-    description = "Use AccessKit C SDK",
-    type = "boolean"
-})
+option("accesskit")
+    set_default(true)
+    set_showmenu(true)
+    set_description("Use AccessKit C SDK")
+option_end()
 
--- 编译器选项
-option("use_static_cpp", {
-    default = false,
-    description = "Link C++ runtime statically",
-    type = "boolean"
-})
+option("use_static_cpp")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Link C++ runtime statically")
+option_end()
 
-option("ccache", {
-    default = false,
-    description = "Use ccache for compilation caching",
-    type = "boolean"
-})
+option("ccache")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Use ccache for compilation caching")
+option_end()
 
 -- ============================================================================
 -- 配置阶段
