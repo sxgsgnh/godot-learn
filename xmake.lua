@@ -1,14 +1,14 @@
--- xmake.lua - Godot Engine XMake构建文件示例
--- 这是根构建文件，展示了完整的XMake配置
+-- xmake.lua - Godot Engine XMake构建文件
+-- 这是根构建文件，定义了完整的构建配置
 
 -- ============================================================================
 -- 项目信息
 -- ============================================================================
 set_project("godot")
-set_version("4.2.0")
+set_version("4.5.0")
 set_description("Godot Engine - Multi-platform game engine")
-set_homepage("https://godotengine.org")
 set_license("MIT")
+
 
 -- ============================================================================
 -- 全局编译配置
@@ -85,22 +85,86 @@ option("disable_physics_2d", {
     type = "boolean"
 })
 
--- 第三方库选项（示例）
+-- 第三方库选项
 option("builtin_zlib", {
     default = true,
     description = "Use built-in zlib",
     type = "boolean"
 })
 
-option("builtin_openssl", {
+option("builtin_brotli", {
     default = true,
-    description = "Use built-in OpenSSL",
+    description = "Use built-in Brotli",
+    type = "boolean"
+})
+
+option("builtin_clipper2", {
+    default = true,
+    description = "Use built-in Clipper2",
+    type = "boolean"
+})
+
+option("builtin_zstd", {
+    default = true,
+    description = "Use built-in Zstd",
+    type = "boolean"
+})
+
+option("builtin_certs", {
+    default = true,
+    description = "Use built-in SSL certificates",
     type = "boolean"
 })
 
 option("builtin_freetype", {
     default = true,
     description = "Use built-in FreeType",
+    type = "boolean"
+})
+
+-- 图形驱动选项
+option("vulkan", {
+    default = true,
+    description = "Enable Vulkan rendering driver",
+    type = "boolean"
+})
+
+option("opengl3", {
+    default = true,
+    description = "Enable OpenGL/GLES3 rendering driver",
+    type = "boolean"
+})
+
+option("d3d12", {
+    default = false,
+    description = "Enable Direct3D 12 rendering driver",
+    type = "boolean"
+})
+
+option("metal", {
+    default = false,
+    description = "Enable Metal rendering driver (macOS/iOS only)",
+    type = "boolean"
+})
+
+-- 音频驱动选项
+option("xaudio2", {
+    default = false,
+    description = "Enable XAudio2 audio driver",
+    type = "boolean"
+})
+
+-- 输入驱动选项
+option("sdl", {
+    default = true,
+    description = "Enable SDL3 input driver",
+    type = "boolean"
+})
+
+-- 无障碍选项
+option("accesskit", {
+    default = true,
+    description = "Use AccessKit C SDK",
     type = "boolean"
 })
 
@@ -114,12 +178,6 @@ option("use_static_cpp", {
 option("ccache", {
     default = false,
     description = "Use ccache for compilation caching",
-    type = "boolean"
-})
-
-option("scu_build", {
-    default = false,
-    description = "Use single compilation unit build",
     type = "boolean"
 })
 
@@ -143,14 +201,14 @@ on_config(function ()
         set_config("platform", platform)
         cprint("${bright cyan}Auto-detected platform: %s${reset}", platform)
     end
-    
+
     -- 架构自动检测
     local arch = get_config("arch")
     if arch == "auto" or arch == "" then
         arch = os.arch()
         set_config("arch", arch)
     end
-    
+
     -- 优化级别处理
     if get_config("optimize") == "auto" then
         if get_config("dev_mode") then
@@ -161,7 +219,7 @@ on_config(function ()
             set_config("optimize", "speed")
         end
     end
-    
+
     -- 调试符号处理
     if get_config("debug_symbols") == "auto" then
         if get_config("dev_mode") then
@@ -172,17 +230,14 @@ on_config(function ()
             set_config("debug_symbols", true)
         end
     end
-    
+
     -- 编译器配置
     if is_plat("windows") then
         set_config("vs_runtime", "dynamic")
-        if not has_tool("cc", "gcc") then
-            set_config("cc", "msvc")
-        end
     elseif is_plat("macos") then
         set_config("cc", "clang")
     end
-    
+
     -- 平台特定编译标志
     if is_plat("windows") then
         add_defines("WINDOWS_ENABLED")
@@ -191,44 +246,37 @@ on_config(function ()
     elseif is_plat("macos") then
         add_defines("MACOS_ENABLED")
     end
-    
+
     -- 编辑器特定配置
     if get_config("target") == "editor" then
         add_defines("TOOLS_ENABLED")
     end
-    
+
     -- 调试功能
     if get_config("target") ~= "template_release" then
         add_defines("DEBUG_ENABLED")
     end
-    
+
     -- 开发者特定功能
     if get_config("dev_mode") then
         add_defines("DEV_ENABLED")
-        set_config("warnings", "extra")
     end
-    
+
     -- 功能开关
     if not get_config("disable_3d") then
         add_defines("_3D_ENABLED")
     else
         set_config("disable_physics_3d", true)
     end
-    
+
     if not get_config("disable_physics_3d") then
         add_defines("PHYSICS_3D_ENABLED")
     end
-    
+
     if not get_config("disable_physics_2d") then
         add_defines("PHYSICS_2D_ENABLED")
     end
-    
-    -- ccache支持
-    if get_config("ccache") then
-        set_config("cc_launcher", "ccache")
-        set_config("cxx_launcher", "ccache")
-    end
-    
+
     -- 打印构建信息
     print_build_info()
 end)
@@ -259,7 +307,7 @@ end
 if is_plat("windows") then
     add_cxxflags("/std:c++17", "/permissive-", "/Zc:__cplusplus")
     add_cflags("/std:c17")
-    
+
     -- MSVC特定设置
     if not has_tool("cc", "gcc") then
         add_cxxflags("/EHsc")  -- 异常处理
@@ -287,7 +335,7 @@ end
 -- 优化设置
 function apply_optimization()
     local opt = get_config("optimize")
-    
+
     if is_plat("windows") then
         if opt == "speed" then
             add_cxxflags("/O2")
@@ -333,111 +381,53 @@ apply_debug_symbols()
 -- 主目标定义
 -- ============================================================================
 target("godot")
-    set_kind("executable")
+    set_kind("binary")
     set_default(true)
-    
+
     -- 基本编译定义
     add_defines("LIBGODOT_ENABLED")
-    
+
     -- Include目录
     add_includedirs(".")
-    
+
     -- ========================================================================
-    -- 第三方库配置（示例）
+    -- 子项目包含和依赖链
     -- ========================================================================
-    
-    -- zlib
-    if get_config("builtin_zlib") then
-        add_includedirs("thirdparty/zlib")
-        add_files(
-            "thirdparty/zlib/adler32.c",
-            "thirdparty/zlib/compress.c",
-            "thirdparty/zlib/crc32.c",
-            "thirdparty/zlib/deflate.c",
-            "thirdparty/zlib/inffast.c",
-            "thirdparty/zlib/inflate.c",
-            "thirdparty/zlib/inftrees.c",
-            "thirdparty/zlib/trees.c",
-            "thirdparty/zlib/uncompr.c",
-            "thirdparty/zlib/zutil.c"
-        )
-        add_defines("ZLIB_ENABLED")
-    end
-    
-    -- ========================================================================
-    -- 核心模块
-    -- ========================================================================
-    
-    -- Core
-    add_includedirs("core")
-    add_files(
-        "core/core_bind.cpp",
-        "core/core_constants.cpp",
-        "core/doc_data.cpp",
-        "core/register_core_types.cpp",
-        "core/config/*.cpp",
-        "core/crypto/*.cpp",
-        "core/debugger/*.cpp",
-        "core/error/*.cpp",
-        "core/extension/*.cpp",
-        "core/input/*.cpp",
-        "core/io/*.cpp",
-        "core/math/*.cpp",
-        "core/object/*.cpp",
-        "core/os/*.cpp",
-        "core/profiling/*.cpp",
-        "core/string/*.cpp",
-        "core/variant/*.cpp"
-    )
-    
-    -- Servers
-    add_includedirs("servers")
-    add_files(
-        "servers/register_server_types.cpp",
-        "servers/server*.cpp",
-        "servers/physics_*.cpp",
-        "servers/rendering/*.cpp",
-        "servers/audio/*.cpp"
-    )
-    
-    -- Scene
-    add_includedirs("scene")
-    add_files(
-        "scene/register_scene_types.cpp",
-        "scene/main/*.cpp",
-        "scene/gui/*.cpp",
-        "scene/3d/*.cpp",
-        "scene/2d/*.cpp"
-    )
-    
-    -- Drivers
-    add_includedirs("drivers")
-    add_files(
-        "drivers/register_driver_types.cpp",
-        "drivers/unix/*.cpp",
-        "drivers/windows/*.cpp"
-    )
-    
-    -- Main
-    add_includedirs("main")
-    add_files(
-        "main/main.cpp"
-    )
-    
-    -- Editor（如果是编辑器构建）
+
+    -- Core 模块（基础库）
+    includes("core/xmake.lua")
+    add_deps("core")
+
+    -- Drivers 模块（驱动程序）
+    includes("drivers/xmake.lua")
+    add_deps("drivers")
+
+    -- Servers 模块（服务器）
+    includes("servers/xmake.lua")
+    add_deps("servers")
+
+    -- Scene 模块（场景系统）
+    includes("scene/xmake.lua")
+    add_deps("scene")
+
+    -- Modules 模块（插件模块）
+    includes("modules/xmake.lua")
+    add_deps("modules")
+
+    -- Main 模块（主程序入口）
+    includes("main/xmake.lua")
+    add_deps("main")
+
+    -- Editor 模块（编辑器 - 如果构建编辑器）
     if get_config("target") == "editor" then
-        add_includedirs("editor")
-        add_files(
-            "editor/register_editor_types.cpp",
-            "editor/editor_node.cpp",
-            "editor/editor_*.cpp"
-        )
+        includes("editor/xmake.lua")
+        add_deps("editor")
     end
-    
+
     -- ========================================================================
     -- 链接选项
     -- ========================================================================
-    
+
     if is_plat("windows") then
         add_syslinks("kernel32", "user32", "gdi32", "winmm")
         add_syslinks("ole32", "oleaut32", "advapi32", "shell32")
@@ -447,7 +437,7 @@ target("godot")
         add_frameworks("Cocoa", "CoreFoundation", "Security")
         add_frameworks("IOKit", "CoreAudio", "AVFoundation")
     end
-    
+
     -- 静态链接C++运行库
     if get_config("use_static_cpp") then
         if is_plat("windows") then
@@ -456,20 +446,23 @@ target("godot")
             add_ldflags("-static-libstdc++")
         end
     end
-    
+
     -- ========================================================================
     -- 输出配置
     -- ========================================================================
-    
+
     set_filename("godot")
     set_targetdir("bin")
-    
+
     -- 添加版本后缀
-    local suffix = "." .. get_config("platform") .. "." .. get_config("target")
+    local platform = get_config("platform") or "unknown"
+    local target_name = get_config("target") or "editor"
+    local arch = get_config("arch") or "x86_64"
+    local suffix = "." .. platform .. "." .. target_name
     if get_config("dev_mode") then
         suffix = suffix .. ".dev"
     end
-    suffix = suffix .. "." .. get_config("arch")
+    suffix = suffix .. "." .. arch
     set_filename("godot" .. suffix)
 
 target_end()
@@ -480,95 +473,36 @@ target_end()
 if get_config("tests") then
     target("godot_tests")
         set_kind("executable")
-        
+
         add_files(
             "tests/*.cpp",
             "tests/*/*.cpp"
         )
-        
+
         add_includedirs(".")
         add_includedirs("tests")
-        
-        add_deps("godot")
-        
+
+        add_deps("core", "drivers", "servers", "scene", "modules", "main")
+
         set_targetdir("bin")
         set_filename("godot_tests")
     target_end()
 end
 
--- ============================================================================
--- 自定义任务
--- ============================================================================
-
--- 清理目标
-rule("clean_task")
-    on_build_file(function ()
-        -- xmake clean自动处理
-    end)
-
--- 快速文档生成示例
-rule("build_info")
-    after_build(function (target)
-        cprint("")
-        cprint("${bright green}✓ Build completed successfully${reset}")
-        cprint("  Output: ${underline}${cyan}%s${reset}", target:targetfile())
-    end)
-
+--
 -- ============================================================================
 -- 模式定义（便于用户快速配置）
 -- ============================================================================
 
 -- 开发模式快捷设置
-mode("dev")
-    set_config("dev_mode", true)
-    set_config("debug_symbols", true)
-    set_config("optimize", "none")
-    set_config("tests", true)
+--mode("dev")
+--    set_config("dev_mode", true)
+--    set_config("debug_symbols", true)
+--  set_config("optimize", "none")
+--    set_config("tests", true)
 
--- 发行模式快捷设置  
-mode("release")
-    set_config("target", "template_release")
-    set_config("debug_symbols", false)
-    set_config("optimize", "speed")
-    
--- ============================================================================
--- 帮助文本
--- ============================================================================
-
--- 自定义帮助信息
-print([[
-${bright}Godot Engine Build System${reset}
-
-${cyan}Quick Start:${reset}
-  xmake config                      # 默认配置
-  xmake config --dev_mode=y         # 开发者模式
-  xmake config -p linux -a x86_64   # Linux x86_64
-  xmake build                        # 构建
-  
-${cyan}Build Targets:${reset}
-  editor           编辑器构建（默认）
-  template_debug   调试导出模板
-  template_release 发行导出模板
-  
-${cyan}Optimization:${reset}
-  none             无优化
-  speed            -O3优化
-  speed_trace      -O2优化（带跟踪）
-  size             -Os优化
-  debug            -Og优化
-  
-${cyan}Common Commands:${reset}
-  xmake config --help               显示所有选项
-  xmake build -v                    详细构建输出
-  xmake build -j$(nproc)            并行构建
-  xmake clean                        清理构建
-  xmake install                      安装程序
-  
-${cyan}Platform Specific:${reset}
-  xmake config -p windows           Windows构建
-  xmake config -p linux             Linux构建
-  xmake config -p macos             macOS构建
-  xmake config -p android           Android构建
-  
-For more information, visit: https://godotengine.org
-]])
+-- 发行模式快捷设置
+--mode("release")
+--    set_config("target", "template_release")
+--    set_config("debug_symbols", false)
+--    set_config("optimize", "speed")
