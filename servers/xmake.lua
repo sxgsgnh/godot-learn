@@ -1,110 +1,26 @@
 target("servers")
     set_kind("static")
-
-    -- Include 路径
     add_includedirs(".")
-    add_includedirs("..", {public = true})
+    add_files("register_server_types.cpp","audio/**.cpp","camera/*.cpp","debugger/*.cpp",
+		"display/*.cpp","movie_writer/*.cpp","rendering/**.cpp","text/*.cpp")
 
-    -- ========================================================================
-    -- 音频服务器
-    -- ========================================================================
-
-    add_files(
-        "audio/**.cpp",
-        "audio/*.cpp"
-    )
-    add_includedirs("audio", {public = true})
-
-    -- ========================================================================
-    -- 物理服务器 2D
-    -- ========================================================================
-
-    if not get_config("disable_physics_2d") then
-        add_files(
-            "physics_2d/**.cpp",
-            "physics_2d/*.cpp"
-        )
-        add_includedirs("physics_2d", {public = true})
-        add_defines("PHYSICS_2D_ENABLED")
+	if not get_config("disable_physics_2d") then
+        add_files("physics_2d/*.cpp")
     end
-
-    -- ========================================================================
-    -- 物理服务器 3D
-    -- ========================================================================
-
     if not get_config("disable_physics_3d") then
-        add_files(
-            "physics_3d/**.cpp",
-            "physics_3d/*.cpp"
-        )
-        add_includedirs("physics_3d", {public = true})
-        add_defines("PHYSICS_3D_ENABLED")
+        add_files("physics_3d/*.cpp")
     end
 
-    -- ========================================================================
-    -- 渲染服务器
-    -- ========================================================================
-
-    add_files(
-        "rendering/**.cpp",
-        "rendering/*.cpp"
-    )
-    add_includedirs("rendering", {public = true})
-
-    -- ========================================================================
-    -- 导航服务器 2D/3D
-    -- ========================================================================
-
-    if not get_config("disable_navigation_2d") then
-        add_files(
-            "navigation_2d/**.cpp",
-            "navigation_3d/*.cpp"
-        )
-        add_includedirs("navigation_2d", {public = true})
-		add_includedirs("navigation_3d", {public = true})
+	if not get_config("disable_navigation_2d") then
+        add_files("navigation_2d/*.cpp")
     end
-
-    -- ========================================================================
-    -- XR 服务器
-    -- ========================================================================
+    if not get_config("disable_navigation_3d") then
+        add_files("navigation_3d/*.cpp")
+    end
 
     if not get_config("disable_xr") then
-        add_files(
-            "xr/**.cpp",
-            "xr/*.cpp"
-        )
-        add_includedirs("xr", {public = true})
-        add_defines("XR_ENABLED")
+        add_files("xr/*.cpp")
     end
 
-    -- ========================================================================
-    -- 主服务器文件
-    -- ========================================================================
-
-    add_files(
-        "*.cpp"
-    )
-
-    -- ========================================================================
-    -- 编译定义
-    -- ========================================================================
-
-    add_defines("SERVERS_ENABLED")
-
-    if not get_config("disable_physics_2d") then
-        add_defines("PHYSICS_2D_ENABLED")
-    end
-
-    if not get_config("disable_physics_3d") then
-        add_defines("PHYSICS_3D_ENABLED")
-    end
-
-    -- ========================================================================
-    -- 依赖
-    -- ========================================================================
-
-    add_deps("core")
-
-    set_targetdir("$(buildir)/lib")
-
+    set_targetdir("$(builddir)/lib")
 target_end()

@@ -176,16 +176,16 @@ def generate_version(argcount, const=False, returns=False, required=False, compa
         s = s.replace("$CALLPTRRET", "r_ret = (m_ret)ret;")
     else:
         s = s.replace("$CALLSIBEGIN", "")
-        s = s.replace("\t\t\t\t$CALLSIRET\\\n", "")
+        s = s.replace("\t\t\t\t$CALLSIRET\\n", "")
         s = s.replace("$CALLPTRRETPASS", "nullptr")
-        s = s.replace("\t\t\t\t$CALLPTRRET\\\n", "")
+        s = s.replace("\t\t\t\t$CALLPTRRET\\n", "")
 
     s = s.replace(" $ARG", argtext)
     s = s.replace("$CALLARGS", callargtext)
     if method_info:
         s = s.replace("$FILL_METHOD_INFO", method_info)
     else:
-        s = s.replace("\t\t$FILL_METHOD_INFO\\\n", method_info)
+        s = s.replace("\t\t$FILL_METHOD_INFO\\n", method_info)
 
     return s
 

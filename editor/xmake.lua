@@ -1,37 +1,16 @@
+add_moduledirs("../xmake")
 target("editor")
-    set_kind("static")
+    set_kind("binary")
 
+	on_config(function (target,option)
+		import("builder.editor")("/home/sgnh")
+	end)
     -- Include 路径
     add_includedirs(".")
-    add_includedirs("..", {public = true})
-
-    -- ========================================================================
-    -- 编辑器模块源文件
-    -- ========================================================================
-
-    add_files(
-        "*.cpp",
-        "editor_*.cpp",
-        "inspector/*.cpp",
-        "plugins/*.cpp",
-        "fileserver/*.cpp",
-        "debugger/*.cpp",
-        "import/*.cpp",
-        "project_converter/*.cpp"
-    )
-
-    -- ========================================================================
-    -- 编译定义
-    -- ========================================================================
-
+	add_files("**.cpp")
     add_defines("EDITOR_ENABLED", "TOOLS_ENABLED")
+    --add_deps("core", "servers", "scene", "main")
 
-    -- ========================================================================
-    -- 依赖
-    -- ========================================================================
-
-    add_deps("core", "servers", "scene", "main")
-
-    set_targetdir("$(buildir)/lib")
+    set_targetdir("$(builddir)/lib")
 
 target_end()

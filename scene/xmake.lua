@@ -1,53 +1,31 @@
 target("scene")
     set_kind("static")
-
     -- Include 路径
     add_includedirs(".")
-    add_includedirs("..", {public = true})
+    add_files("*.cpp","animation/*cpp","audio/*.cpp","debugger/*.cpp","gui/*.cpp","main/*.cpp"
+	"2d/*.cpp","resources/*.cpp","theme/*.cpp")
 
-    -- ========================================================================
-    -- 场景模块源文件
-    -- ========================================================================
+	if not has_config("disable_physics_2d")then
+		add_files("2d/physics/**.cpp")
+	end
+	if not has_config("disable_navigation_2d")then
+		add_files("2d/navigation/*.cpp")
+	end
 
-    add_files(
-        "*.cpp",
-        "main/*.cpp",
-        "gui/*.cpp",
-        "2d/*.cpp",
-        "3d/*.cpp",
-        "animation/*.cpp",
-        "audio/*.cpp",
-        "resources/*.cpp",
-        "debugger/*.cpp",
-		"theme/*.cpp"
-    )
+	if not has_config("disable_3d")then
+		add_files("3d/*.cpp")
+		if not has_config("disable_physics_3d")then
+			add_files("3d/physics/**.cpp")
+		end
+		if not has_config("disable_navigation_3d")then
+			add_files("3d/navigation/*.cpp")
+		end
+		if not has_config("disable_xr")then
+			add_files("3d/xr/*.cpp")
+		end
+	end
 
-    -- ========================================================================
-    -- 编译定义
-    -- ========================================================================
 
-    add_defines("SCENE_ENABLED")
-
-    -- 3D 特定定义
-    if not get_config("disable_3d") then
-        add_defines("_3D_ENABLED")
-    end
-
-    -- 物理特定定义
-    if not get_config("disable_physics_2d") then
-        add_defines("PHYSICS_2D_ENABLED")
-    end
-
-    if not get_config("disable_physics_3d") then
-        add_defines("PHYSICS_3D_ENABLED")
-    end
-
-    -- ========================================================================
-    -- 依赖
-    -- ========================================================================
-
-    add_deps("core", "servers")
-
-    set_targetdir("$(buildir)/lib")
+    set_targetdir("$(builddir)/lib")
 
 target_end()
